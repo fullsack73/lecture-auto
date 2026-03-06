@@ -54,6 +54,12 @@ def format_command_output(result: CommandResult, *, as_json: bool = False) -> st
     if result.command == "session detail":
         return _render_detail_text(result.payload)
 
+    if result.command == "transcript search":
+        return _render_transcript_search(result.payload)
+
+    if result.command == "transcript open":
+        return _render_transcript_open(result.payload, result.message)
+
     return result.message
 
 
@@ -154,4 +160,28 @@ def _render_transcription_text(payload: dict[str, Any]) -> str:
     lines.append(f"- Attempt: {progress.get('attempt')}/{progress.get('retry_limit')}")
     lines.append(f"- Transcript Path: {progress.get('transcript_file_path')}")
     lines.append("- Next: Run 'session detail <session_id>' to review transcript metadata")
+    return "\n".join(lines)
+
+
+def _render_transcript_search(payload: dict[str, Any]) -> str:
+    matches = payload.get("matches", [])
+    query = payload.get("query", "")
+    lines = [f"Transcript Search Results for '{query}' ({len(matches)} found)"]
+    if not matches:
+        lines.append("- No matching sessions found.")
+        return "\n".join(lines)
+    
+    for row in matches:
+        title = row.get("title") or "(pending title)"
+        lines.append(f"- {row['date']} | {row['session_id']} | {title}")
+    lines.append("- Next: Run 'lecture open --session <id|title>' to review and edit")
+    return "\n".join(lines)
+
+def _render_transcript_open(payload: dict[str, Any], message: str) -> str:
+    lines = [
+        "Transcript Review",
+        f"- Session ID: {payload['session_id']}",
+        f"- State: {payload['state']}",
+        f"- Result: {message}"
+    ]
     return "\n".join(lines)

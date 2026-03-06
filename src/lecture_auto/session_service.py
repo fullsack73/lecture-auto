@@ -640,6 +640,93 @@ class SessionService:
             )
         session["job_status"] = target_state
 
+    def transcript_search(self, title_query: str) -> CommandResult:
+        sessions = self.store.load_all()
+        matches = []
+        lowered_query = title_query.lower()
+        for session in sessions:
+            title = session.get("title") or ""
+            if lowered_query in title.lower():
+                matches.append(session)
+        
+        matches = sorted(matches, key=lambda row: row["date"], reverse=True)
+        return CommandResult(
+            command="transcript search",
+            payload={"matches": matches, "query": title_query},
+            message=f"Found {len(matches)} session(s) matching '{title_query}'."
+        )
+
+    def transcript_open(self, session_reference: str) -> CommandResult:
+        sessions = self.store.load_all()
+        session = None
+        for row in sessions:
+            if row["session_id"] == session_reference or \
+               (row.get("title") and row.get("title").lower() == session_reference.lower()):
+                session = row
+                break
+        
+        if not session:
+            raise SessionCommandError(
+                code="SESSION_NOT_FOUND",
+                message=f"Session matching '{session_reference}' was not found.",
+                guidance="Run 'lecture search <title>' to find valid sessions.",
+                exit_code=1,
+            )
+
+        session_id = session["session_id"]
+        
+        raw_transcript_path_str = session.get("transcript_file_path")
+        if not raw_transcript_path_str:
+            raise SessionCommandError(
+                code="TRANSCRIPT_NOT_FOUND",
+                message=f"No transcript found for session '{session_id}'.",
+                guidance="Run transcription for this session first.",
+                exit_code=1,
+            )
+        
+        metadata_root = self.store.metadata_file.parent.parent
+        raw_transcript_path = metadata_root / raw_transcript_path_str
+        edited_transcript_path = metadata_root / f"transcripts/{session_id}-edited.md"
+
+        active_path = edited_transcript_path if edited_transcript_path.exists() else raw_transcript_path
+        
+        if not active_path.exists():
+            raise SessionCommandError(
+                code="TRANSCRIPT_FILE_MISSING",
+                message=f"Transcript file missing at '{active_path}'.",
+                guidance="Ensure the file hasn't been manually deleted.",
+                exit_code=1,
+            )
+
+        pre_edit_mtime = active_path.stat().st_mtime
+        
+        import typer
+        typer.launch(str(active_path.resolve()), wait=True)
+
+        post_edit_mtime = active_path.stat().st_mtime
+        
+        if post_edit_mtime > pre_edit_mtime:
+            if active_path == raw_transcript_path:
+                import shutil
+                shutil.copyfile(raw_transcript_path, edited_transcript_path)
+                return CommandResult(
+                    command="transcript open",
+                    payload={"session_id": session_id, "state": "edited"},
+                    message=f"Transcript for '{session_id}' edited and saved as new version."
+                )
+            else:
+                return CommandResult(
+                    command="transcript open",
+                    payload={"session_id": session_id, "state": "edited"},
+                    message=f"Edited transcript for '{session_id}' updated."
+                )
+        
+        return CommandResult(
+            command="transcript open",
+            payload={"session_id": session_id, "state": "unmodified"},
+            message=f"Transcript for '{session_id}' reviewed (no changes)."
+        )
+
     def _copy_import_audio(self, *, source_path: str, destination_relative_path: str) -> None:
         metadata_root = self.store.metadata_file.parent.parent
         destination = metadata_root / destination_relative_path
