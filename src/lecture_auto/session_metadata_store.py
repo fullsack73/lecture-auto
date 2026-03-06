@@ -1,0 +1,128 @@
+from __future__ import annotations
+
+import json
+import os
+from pathlib import Path
+from tempfile import NamedTemporaryFile
+from typing import Any
+
+METADATA_FIELDS = (
+    "session_id",
+    "date",
+    "title",
+    "course",
+    "status",
+    "audio_file_path",
+    "timestamps",
+    "naming_pending",
+)
+
+REQUIRED_FIELDS = {"session_id", "date", "status", "timestamps", "naming_pending"}
+
+
+class SessionMetadataValidationError(ValueError):
+    """Raised when session metadata does not match the expected schema."""
+
+
+class SessionMetadataStore:
+    def __init__(self, metadata_file: Path) -> None:
+        self.metadata_file = metadata_file
+
+    def load_all(self) -> list[dict[str, Any]]:
+        if not self.metadata_file.exists():
+            return []
+
+        with self.metadata_file.open("r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+
+        if not isinstance(payload, list):
+            raise SessionMetadataValidationError("Metadata file must contain a list of sessions")
+
+        validated: list[dict[str, Any]] = []
+        for entry in payload:
+            validated.append(self._normalize_session(entry))
+        return validated
+
+    def upsert(self, session: dict[str, Any]) -> dict[str, Any]:
+        normalized = self._normalize_session(session)
+        current = self.load_all()
+
+        replaced = False
+        updated: list[dict[str, Any]] = []
+        for row in current:
+            if row["session_id"] == normalized["session_id"]:
+                updated.append(normalized)
+                replaced = True
+            else:
+                updated.append(row)
+
+        if not replaced:
+            updated.append(normalized)
+
+        self._safe_write(updated)
+        return normalized
+
+    def list_recent_first(self) -> list[dict[str, Any]]:
+        sessions = self.load_all()
+        return sorted(sessions, key=lambda row: row["date"], reverse=True)
+
+    def get_by_session_id(self, session_id: str) -> dict[str, Any] | None:
+        for row in self.load_all():
+            if row["session_id"] == session_id:
+                return row
+        return None
+
+    def _normalize_session(self, session: Any) -> dict[str, Any]:
+        if not isinstance(session, dict):
+            raise SessionMetadataValidationError("Session metadata must be a JSON object")
+
+        missing = REQUIRED_FIELDS - set(session.keys())
+        if missing:
+            missing_list = ", ".join(sorted(missing))
+            raise SessionMetadataValidationError(f"Missing required fields: {missing_list}")
+
+        normalized: dict[str, Any] = {}
+        for key in METADATA_FIELDS:
+            if key in session:
+                normalized[key] = session[key]
+            elif key in ("title", "course", "audio_file_path"):
+                normalized[key] = None
+
+        self._validate_types(normalized)
+        return normalized
+
+    def _validate_types(self, session: dict[str, Any]) -> None:
+        string_fields = ("session_id", "date", "status")
+        for field in string_fields:
+            if not isinstance(session[field], str) or not session[field].strip():
+                raise SessionMetadataValidationError(f"Field '{field}' must be a non-empty string")
+
+        optional_string_fields = ("title", "course", "audio_file_path")
+        for field in optional_string_fields:
+            value = session[field]
+            if value is not None and not isinstance(value, str):
+                raise SessionMetadataValidationError(f"Field '{field}' must be a string or null")
+
+        if not isinstance(session["timestamps"], dict):
+            raise SessionMetadataValidationError("Field 'timestamps' must be an object")
+
+        if not isinstance(session["naming_pending"], bool):
+            raise SessionMetadataValidationError("Field 'naming_pending' must be a boolean")
+
+    def _safe_write(self, sessions: list[dict[str, Any]]) -> None:
+        self.metadata_file.parent.mkdir(parents=True, exist_ok=True)
+
+        temp_name: str | None = None
+        with NamedTemporaryFile(
+            "w", encoding="utf-8", dir=self.metadata_file.parent, delete=False
+        ) as temp_file:
+            json.dump(sessions, temp_file, ensure_ascii=False, separators=(",", ":"))
+            temp_file.flush()
+            os.fsync(temp_file.fileno())
+            temp_name = temp_file.name
+
+        try:
+            os.replace(temp_name, self.metadata_file)
+        finally:
+            if temp_name and os.path.exists(temp_name):
+                os.remove(temp_name)
