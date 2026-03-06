@@ -12,6 +12,11 @@ METADATA_FIELDS = (
     "title",
     "course",
     "status",
+    "job_status",
+    "job_attempts",
+    "job_timestamps",
+    "job_error_code",
+    "import_source_audio_path",
     "audio_file_path",
     "timestamps",
     "naming_pending",
@@ -85,8 +90,19 @@ class SessionMetadataStore:
         for key in METADATA_FIELDS:
             if key in session:
                 normalized[key] = session[key]
-            elif key in ("title", "course", "audio_file_path"):
+            elif key in (
+                "title",
+                "course",
+                "audio_file_path",
+                "job_status",
+                "job_error_code",
+                "import_source_audio_path",
+            ):
                 normalized[key] = None
+            elif key == "job_attempts":
+                normalized[key] = 0
+            elif key == "job_timestamps":
+                normalized[key] = {}
 
         self._validate_types(normalized)
         return normalized
@@ -102,6 +118,24 @@ class SessionMetadataStore:
             value = session[field]
             if value is not None and not isinstance(value, str):
                 raise SessionMetadataValidationError(f"Field '{field}' must be a string or null")
+
+        if session["job_status"] is not None and not isinstance(session["job_status"], str):
+            raise SessionMetadataValidationError("Field 'job_status' must be a string or null")
+
+        if not isinstance(session["job_attempts"], int) or session["job_attempts"] < 0:
+            raise SessionMetadataValidationError("Field 'job_attempts' must be a non-negative integer")
+
+        if not isinstance(session["job_timestamps"], dict):
+            raise SessionMetadataValidationError("Field 'job_timestamps' must be an object")
+
+        if session["job_error_code"] is not None and not isinstance(session["job_error_code"], str):
+            raise SessionMetadataValidationError("Field 'job_error_code' must be a string or null")
+
+        import_source = session["import_source_audio_path"]
+        if import_source is not None and not isinstance(import_source, str):
+            raise SessionMetadataValidationError(
+                "Field 'import_source_audio_path' must be a string or null"
+            )
 
         if session["audio_file_path"] is not None:
             self._validate_audio_path_for_session(
@@ -125,11 +159,47 @@ class SessionMetadataStore:
 
         return f"recordings/{session_id}.{clean_extension}"
 
+    def build_imported_audio_path(self, session_id: str, extension: str, *, ordinal: int = 1) -> str:
+        if not session_id.strip():
+            raise SessionMetadataValidationError("session_id must be a non-empty string")
+        if ordinal < 1:
+            raise SessionMetadataValidationError("ordinal must be >= 1")
+
+        clean_extension = extension.lstrip(".").strip().lower()
+        if not clean_extension:
+            raise SessionMetadataValidationError("Import extension must be a non-empty string")
+
+        suffix = "" if ordinal == 1 else f"-{ordinal}"
+        return f"recordings/{session_id}-imported{suffix}.{clean_extension}"
+
+    def next_imported_audio_path(self, session_id: str, extension: str) -> str:
+        normalized_extension = extension.lstrip(".").strip().lower()
+        existing_paths = {
+            row["audio_file_path"]
+            for row in self.load_all()
+            if row.get("audio_file_path") is not None
+        }
+
+        ordinal = 1
+        while True:
+            candidate = self.build_imported_audio_path(
+                session_id,
+                normalized_extension,
+                ordinal=ordinal,
+            )
+            if candidate not in existing_paths:
+                return candidate
+            ordinal += 1
+
     def _validate_audio_path_for_session(self, session_id: str, audio_file_path: str) -> None:
-        expected_prefix = f"recordings/{session_id}."
+        expected_prefixes = (
+            f"recordings/{session_id}.",
+            f"recordings/{session_id}-imported.",
+            f"recordings/{session_id}-imported-",
+        )
         normalized = PurePosixPath(audio_file_path).as_posix()
 
-        if not normalized.startswith(expected_prefix):
+        if not normalized.startswith(expected_prefixes):
             raise SessionMetadataValidationError(
                 "Field 'audio_file_path' must follow recordings/{session_id}.* convention"
             )

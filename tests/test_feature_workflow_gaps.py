@@ -78,3 +78,34 @@ def test_json_history_and_detail_outputs_are_single_line_parseable(tmp_path: Pat
     assert "\n" not in detail_json
     assert '"ok":true' in history_json
     assert '"command":"session detail"' in detail_json
+
+
+def test_import_flow_persists_audio_file_under_local_recordings_folder(tmp_path: Path) -> None:
+    service = _service(tmp_path)
+    service.session_create("session-405", "2026-03-12")
+    source = tmp_path / "lecture.wav"
+    source.write_bytes(b"wave-bytes")
+
+    result = service.import_audio("session-405", str(source))
+
+    expected = tmp_path / "recordings" / "session-405-imported.wav"
+    assert result.payload["audio_file_path"] == "recordings/session-405-imported.wav"
+    assert expected.exists()
+    assert expected.read_bytes() == b"wave-bytes"
+
+
+def test_imported_audio_paths_are_deterministic_and_session_scoped(tmp_path: Path) -> None:
+    service = _service(tmp_path)
+    source_a = tmp_path / "a.wav"
+    source_b = tmp_path / "b.wav"
+    source_a.write_bytes(b"a")
+    source_b.write_bytes(b"b")
+
+    service.session_create("session-406", "2026-03-12")
+    service.session_create("session-407", "2026-03-12")
+
+    a_result = service.import_audio("session-406", str(source_a))
+    b_result = service.import_audio("session-407", str(source_b))
+
+    assert a_result.payload["audio_file_path"] == "recordings/session-406-imported.wav"
+    assert b_result.payload["audio_file_path"] == "recordings/session-407-imported.wav"

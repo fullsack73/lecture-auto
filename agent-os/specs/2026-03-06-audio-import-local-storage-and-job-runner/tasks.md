@@ -12,20 +12,20 @@ Assigned roles: database-engineer, api-engineer, ui-designer, testing-engineer
 **Assigned implementer:** database-engineer
 **Dependencies:** None
 
-- [ ] 1.0 Complete storage and metadata updates for audio attachment
-  - [ ] 1.1 Write 2-8 focused tests for metadata schema and persistence updates
+- [x] 1.0 Complete storage and metadata updates for audio attachment
+  - [x] 1.1 Write 2-8 focused tests for metadata schema and persistence updates
     - Cover only critical behavior: supported path conventions, job status fields, retry counter persistence, duplicate marker checks
     - Reuse existing test style from `tests/test_session_metadata_store.py`
-  - [ ] 1.2 Extend metadata schema for import job lifecycle and retry tracking
+  - [x] 1.2 Extend metadata schema for import job lifecycle and retry tracking
     - Add fields for `job_status`, `job_attempts`, `job_timestamps`, `job_error_code` (if needed)
     - Keep deterministic structure and compatibility with existing required fields pattern
-  - [ ] 1.3 Add deterministic audio storage naming/path behavior for imported files
+  - [x] 1.3 Add deterministic audio storage naming/path behavior for imported files
     - Follow existing `recordings/{session_id}.*` convention and structured naming policy
     - Ensure collision-safe deterministic naming for imported assets
-  - [ ] 1.4 Implement duplicate-audio blocking checks at persistence boundary
+  - [x] 1.4 Implement duplicate-audio blocking checks at persistence boundary
     - Define duplicate rule for same session + same logical audio target
     - Persist enough metadata to enforce this rule consistently
-  - [ ] 1.5 Ensure storage layer tests pass
+  - [x] 1.5 Ensure storage layer tests pass
     - Run ONLY tests written in 1.1
     - Do NOT run full test suite
 
@@ -41,23 +41,23 @@ Assigned roles: database-engineer, api-engineer, ui-designer, testing-engineer
 **Assigned implementer:** api-engineer
 **Dependencies:** Task Group 1
 
-- [ ] 2.0 Complete command/business logic for audio import job runner
-  - [ ] 2.1 Write 2-8 focused tests for command flow and lifecycle transitions
+- [x] 2.0 Complete command/business logic for audio import job runner
+  - [x] 2.1 Write 2-8 focused tests for command flow and lifecycle transitions
     - Cover critical paths: session lookup, extension validation, lifecycle transitions, retry-only-on-failed, retry max=3
     - Reuse conventions from `tests/test_session_business_rules.py`
-  - [ ] 2.2 Add import command use-case requiring `session_id` + local audio input
+  - [x] 2.2 Add import command use-case requiring `session_id` + local audio input
     - Scope to pre-existing audio upload only
     - Reuse `SessionService` session resolution and error contract patterns
-  - [ ] 2.3 Implement file extension validation for supported types (`.wav`, `.mp3`)
+  - [x] 2.3 Implement file extension validation for supported types (`.wav`, `.mp3`)
     - Reject unsupported types with actionable errors and guidance
-  - [ ] 2.4 Implement job runner state machine and transitions
+  - [x] 2.4 Implement job runner state machine and transitions
     - Include `queued`, `running`, `succeeded`, `failed`, `canceled`
     - Enforce invalid transition rejection with actionable guidance
-  - [ ] 2.5 Implement retry policy
+  - [x] 2.5 Implement retry policy
     - Failed jobs only
     - Max retry count: 3
     - Reject retry request for non-failed jobs or attempts > 3
-  - [ ] 2.6 Ensure business logic tests pass
+  - [x] 2.6 Ensure business logic tests pass
     - Run ONLY tests written in 2.1
     - Do NOT run full test suite
 
@@ -74,16 +74,16 @@ Assigned roles: database-engineer, api-engineer, ui-designer, testing-engineer
 **Assigned implementer:** ui-designer
 **Dependencies:** Task Group 2
 
-- [ ] 3.0 Complete CLI output contract for import/job commands
-  - [ ] 3.1 Write 2-8 focused tests for CLI output formatting
+- [x] 3.0 Complete CLI output contract for import/job commands
+  - [x] 3.1 Write 2-8 focused tests for CLI output formatting
     - Validate text output and JSON-line output for success/failure/progress summaries
     - Reuse formatting style from `tests/test_cli_output_formatting.py`
-  - [ ] 3.2 Add progress output sections for import/job lifecycle
+  - [x] 3.2 Add progress output sections for import/job lifecycle
     - Include started_at, ended_at, current stage, final status, and next action guidance
     - Reuse existing `cli_output.py` wording and structure patterns
-  - [ ] 3.3 Add actionable error output for validation and retry failures
+  - [x] 3.3 Add actionable error output for validation and retry failures
     - Keep message + guidance + exit code contract consistent
-  - [ ] 3.4 Ensure CLI output tests pass
+  - [x] 3.4 Ensure CLI output tests pass
     - Run ONLY tests written in 3.1
     - Do NOT run full test suite
 
@@ -99,17 +99,17 @@ Assigned roles: database-engineer, api-engineer, ui-designer, testing-engineer
 **Assigned implementer:** testing-engineer
 **Dependencies:** Task Groups 1-3
 
-- [ ] 4.0 Review feature tests and fill only critical gaps
-  - [ ] 4.1 Review tests created in Task Groups 1-3
+- [x] 4.0 Review feature tests and fill only critical gaps
+  - [x] 4.1 Review tests created in Task Groups 1-3
     - Validate that each group kept 2-8 focused tests
     - Validate they test only core feature behavior
-  - [ ] 4.2 Identify critical workflow gaps for this spec only
+  - [x] 4.2 Identify critical workflow gaps for this spec only
     - Focus on attach->persist->trigger->status->retry flow
     - Exclude full-application coverage analysis
-  - [ ] 4.3 Add up to 10 strategic tests maximum if critical gaps exist
+  - [x] 4.3 Add up to 10 strategic tests maximum if critical gaps exist
     - Prioritize integration of validation + state + output contract
     - Avoid exhaustive edge-case matrix
-  - [ ] 4.4 Run only feature-specific tests
+  - [x] 4.4 Run only feature-specific tests
     - Run tests from 1.1, 2.1, 3.1 and optional 4.3 additions
     - Expected total around 16-34 tests
     - Do NOT run full suite

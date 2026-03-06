@@ -43,8 +43,10 @@ def test_upsert_persists_deterministic_payload_and_roundtrips(tmp_path: Path) ->
     # Key order is deterministic to keep snapshot-style assertions stable.
     assert target.read_text(encoding="utf-8") == (
         '[{"session_id":"session-001","date":"2026-03-06","title":"Intro to AI",'
-        '"course":"CS101","status":"idle","audio_file_path":null,'
-        '"timestamps":{"created_at":"2026-03-06"},"naming_pending":false}]'
+        '"course":"CS101","status":"idle","job_status":null,"job_attempts":0,'
+        '"job_timestamps":{},"job_error_code":null,"import_source_audio_path":null,'
+        '"audio_file_path":null,"timestamps":{"created_at":"2026-03-06"},'
+        '"naming_pending":false}]'
     )
 
 
@@ -92,3 +94,35 @@ def test_get_by_session_id_returns_matching_session(tmp_path: Path) -> None:
     assert found is not None
     assert found["session_id"] == "session-111"
     assert missing is None
+
+
+def test_normalize_adds_job_defaults_for_backward_compatible_payloads(tmp_path: Path) -> None:
+    store = SessionMetadataStore(tmp_path / "config" / "sessions.json")
+    saved = store.upsert(_build_session("session-112", "2026-03-08"))
+
+    assert saved["job_status"] is None
+    assert saved["job_attempts"] == 0
+    assert saved["job_timestamps"] == {}
+    assert saved["job_error_code"] is None
+    assert saved["import_source_audio_path"] is None
+
+
+def test_build_imported_audio_path_uses_deterministic_naming(tmp_path: Path) -> None:
+    store = SessionMetadataStore(tmp_path / "config" / "sessions.json")
+
+    first = store.build_imported_audio_path("session-113", "mp3")
+    second = store.build_imported_audio_path("session-113", "mp3", ordinal=2)
+
+    assert first == "recordings/session-113-imported.mp3"
+    assert second == "recordings/session-113-imported-2.mp3"
+
+
+def test_next_imported_audio_path_skips_existing_paths(tmp_path: Path) -> None:
+    store = SessionMetadataStore(tmp_path / "config" / "sessions.json")
+    existing = _build_session("session-114", "2026-03-08")
+    existing["audio_file_path"] = "recordings/session-114-imported.mp3"
+    store.upsert(existing)
+
+    next_path = store.next_imported_audio_path("session-114", "mp3")
+
+    assert next_path == "recordings/session-114-imported-2.mp3"

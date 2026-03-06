@@ -42,6 +42,9 @@ def format_command_output(result: CommandResult, *, as_json: bool = False) -> st
             "- Next: Run 'session detail <session_id>' to review metadata"
         )
 
+    if result.command in {"audio import", "audio import retry", "audio import cancel"}:
+        return _render_import_text(result.command, result.payload)
+
     if result.command == "session history":
         return _render_history_text(result.payload)
 
@@ -108,6 +111,28 @@ def _render_detail_text(payload: dict[str, Any]) -> str:
     lines.append(f"- Audio Path: {payload.get('audio_file_path')}")
     lines.append(f"- Naming Pending: {payload['naming_pending']}")
     lines.append(f"- Timestamps: {payload['timestamps']}")
+    return "\n".join(lines)
+
+
+def _render_import_text(command: str, payload: dict[str, Any]) -> str:
+    progress = payload.get("progress") or {}
+    header = {
+        "audio import": "Audio Import Completed",
+        "audio import retry": "Audio Import Retry Completed",
+        "audio import cancel": "Audio Import Canceled",
+    }.get(command, "Audio Import")
+
+    lines = [header]
+    lines.append(f"- Session ID: {payload['session_id']}")
+    lines.append(f"- Audio Path: {payload.get('audio_file_path')}")
+    lines.append(f"- Current Stage: {progress.get('current_stage')}")
+    lines.append(f"- Final Status: {progress.get('final_status')}")
+    lines.append(f"- Started At: {progress.get('started_at')}")
+    lines.append(f"- Ended At: {progress.get('ended_at')}")
+    lines.append(
+        f"- Attempt: {progress.get('attempt')}/{progress.get('retry_limit')}"
+    )
+    lines.append("- Next: Run 'session detail <session_id>' to review import metadata")
     return "\n".join(lines)
 
 

@@ -88,3 +88,77 @@ def test_output_contract_supports_plain_text_and_one_line_json(tmp_path: Path) -
     assert "\n" not in json_line
     assert created.as_text() == "Session 'session-204' created and ready to record."
     assert '"command":"session create"' in json_line
+
+
+def test_import_audio_requires_supported_extension_and_updates_job_lifecycle(tmp_path: Path) -> None:
+    service = _service(tmp_path)
+    service.session_create("session-205", "2026-03-09")
+    source = tmp_path / "sample.wav"
+    source.write_bytes(b"wav")
+
+    result = service.import_audio("session-205", str(source))
+
+    assert result.payload["job_status"] == "succeeded"
+    assert result.payload["job_attempts"] == 1
+    assert result.payload["progress"]["current_stage"] == "succeeded"
+    assert result.payload["audio_file_path"] == "recordings/session-205-imported.wav"
+
+
+def test_import_audio_rejects_unsupported_extension_with_actionable_error(tmp_path: Path) -> None:
+    service = _service(tmp_path)
+    service.session_create("session-206", "2026-03-09")
+    source = tmp_path / "sample.m4a"
+    source.write_bytes(b"m4a")
+
+    with pytest.raises(SessionCommandError) as exc:
+        service.import_audio("session-206", str(source))
+
+    assert exc.value.code == "UNSUPPORTED_AUDIO_FORMAT"
+    assert "Use a .wav or .mp3 file" in exc.value.guidance
+
+
+def test_import_audio_rejects_duplicate_source_for_same_session(tmp_path: Path) -> None:
+    service = _service(tmp_path)
+    service.session_create("session-207", "2026-03-09")
+    source = tmp_path / "sample.mp3"
+    source.write_bytes(b"mp3")
+    service.import_audio("session-207", str(source))
+
+    with pytest.raises(SessionCommandError) as exc:
+        service.import_audio("session-207", str(source))
+
+    assert exc.value.code == "DUPLICATE_AUDIO_IMPORT"
+
+
+def test_retry_import_audio_allows_failed_jobs_only_and_caps_attempts(tmp_path: Path) -> None:
+    service = _service(tmp_path)
+    service.session_create("session-208", "2026-03-09")
+    source = tmp_path / "missing.wav"
+
+    failed = service.import_audio("session-208", str(source))
+    assert failed.payload["job_status"] == "failed"
+
+    source.write_bytes(b"wav")
+    retried = service.retry_import_audio("session-208")
+    assert retried.command == "audio import retry"
+    assert retried.payload["job_attempts"] == 2
+    assert retried.payload["job_status"] == "succeeded"
+
+    with pytest.raises(SessionCommandError) as exc:
+        service.retry_import_audio("session-208")
+    assert exc.value.code == "IMPORT_RETRY_NOT_ALLOWED"
+
+
+def test_retry_import_audio_rejects_when_attempts_reach_limit(tmp_path: Path) -> None:
+    service = _service(tmp_path)
+    created = service.session_create("session-209", "2026-03-09")
+    session = created.payload
+    session["job_status"] = "failed"
+    session["job_attempts"] = 3
+    session["import_source_audio_path"] = str((tmp_path / "sample.wav").as_posix())
+    service.store.upsert(session)
+
+    with pytest.raises(SessionCommandError) as exc:
+        service.retry_import_audio("session-209")
+
+    assert exc.value.code == "IMPORT_RETRY_LIMIT_EXCEEDED"

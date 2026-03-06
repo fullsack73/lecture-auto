@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import shutil
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from lecture_auto.capture_runtime import (
@@ -24,6 +26,18 @@ ALLOWED_TRANSITIONS = {
     "completed": set(),
     "failed": set(),
 }
+
+SUPPORTED_IMPORT_EXTENSIONS = {"wav", "mp3"}
+JOB_VALID_STATES = {"queued", "running", "succeeded", "failed", "canceled"}
+JOB_ALLOWED_TRANSITIONS = {
+    None: {"queued"},
+    "queued": {"running", "failed", "canceled"},
+    "running": {"succeeded", "failed", "canceled"},
+    "succeeded": set(),
+    "failed": {"queued"},
+    "canceled": {"queued"},
+}
+MAX_IMPORT_RETRIES = 3
 
 
 class SessionCommandError(RuntimeError):
@@ -183,6 +197,125 @@ class SessionService:
             message=f"Loaded details for session '{session_id}'.",
         )
 
+    def import_audio(
+        self,
+        session_id: str,
+        source_audio_path: str,
+        *,
+        allow_failed_retry: bool = False,
+    ) -> CommandResult:
+        session = self._require_session(session_id)
+        normalized_source_path = self._normalize_source_path(source_audio_path)
+        extension = self._require_supported_import_extension(normalized_source_path)
+        self._reject_duplicate_import(
+            session,
+            normalized_source_path,
+            allow_failed_retry=allow_failed_retry,
+        )
+
+        session["import_source_audio_path"] = normalized_source_path
+        session["job_attempts"] = int(session.get("job_attempts", 0)) + 1
+        session["job_error_code"] = None
+
+        self._transition_job_or_raise(session, "queued")
+        session["job_timestamps"]["queued_at"] = self._utc_now()
+        self._transition_job_or_raise(session, "running")
+        session["job_timestamps"]["started_at"] = self._utc_now()
+
+        persisted_path = session.get("audio_file_path")
+        if not persisted_path:
+            persisted_path = self.store.next_imported_audio_path(session_id, extension)
+
+        try:
+            self._copy_import_audio(
+                source_path=normalized_source_path,
+                destination_relative_path=persisted_path,
+            )
+        except OSError as exc:
+            self._transition_job_or_raise(session, "failed")
+            session["job_error_code"] = "IMPORT_COPY_ERROR"
+            session["job_timestamps"]["ended_at"] = self._utc_now()
+            saved = self._persist_or_raise(session)
+            return CommandResult(
+                command="audio import",
+                payload=self._build_progress_payload(saved),
+                message=(
+                    f"Audio import failed for session '{session_id}'. "
+                    "Fix file access issues and run retry."
+                ),
+            )
+
+        session["audio_file_path"] = persisted_path
+        self._transition_job_or_raise(session, "succeeded")
+        session["job_timestamps"]["ended_at"] = self._utc_now()
+        saved = self._persist_or_raise(session)
+        return CommandResult(
+            command="audio import",
+            payload=self._build_progress_payload(saved),
+            message=f"Audio import completed for session '{session_id}'.",
+        )
+
+    def retry_import_audio(self, session_id: str) -> CommandResult:
+        session = self._require_session(session_id)
+        current_status = session.get("job_status")
+        attempts = int(session.get("job_attempts", 0))
+
+        if current_status != "failed":
+            raise SessionCommandError(
+                code="IMPORT_RETRY_NOT_ALLOWED",
+                message="Retry is only allowed for failed import jobs.",
+                guidance="Run import first or inspect the last failed job.",
+                exit_code=1,
+            )
+
+        if attempts >= MAX_IMPORT_RETRIES:
+            raise SessionCommandError(
+                code="IMPORT_RETRY_LIMIT_EXCEEDED",
+                message="Import retry limit has been reached.",
+                guidance="Retry limit is 3 attempts. Re-import with a new command if needed.",
+                exit_code=1,
+            )
+
+        source_audio_path = session.get("import_source_audio_path")
+        if not isinstance(source_audio_path, str) or not source_audio_path.strip():
+            raise SessionCommandError(
+                code="IMPORT_SOURCE_NOT_FOUND",
+                message="Cannot retry import because source audio path is missing.",
+                guidance="Run the audio import command again with a valid source path.",
+                exit_code=1,
+            )
+
+        # Retry must preserve the same target path to avoid duplicate artifacts.
+        retried = self.import_audio(
+            session_id=session_id,
+            source_audio_path=source_audio_path,
+            allow_failed_retry=True,
+        )
+        return CommandResult(
+            command="audio import retry",
+            payload=retried.payload,
+            message=retried.message,
+        )
+
+    def cancel_import_audio(self, session_id: str) -> CommandResult:
+        session = self._require_session(session_id)
+        if session.get("job_status") not in {"queued", "running"}:
+            raise SessionCommandError(
+                code="IMPORT_CANCEL_NOT_ALLOWED",
+                message="Import cancellation is only allowed for queued/running jobs.",
+                guidance="Start a new import job first or check current status.",
+                exit_code=1,
+            )
+
+        self._transition_job_or_raise(session, "canceled")
+        session["job_timestamps"]["ended_at"] = self._utc_now()
+        saved = self._persist_or_raise(session)
+        return CommandResult(
+            command="audio import cancel",
+            payload=self._build_progress_payload(saved),
+            message=f"Audio import canceled for session '{session_id}'.",
+        )
+
     def map_capture_failure(self, failure_kind: str) -> SessionCommandError:
         mapping = {
             "dependency": SessionCommandError(
@@ -272,3 +405,94 @@ class SessionService:
 
     def _utc_now(self) -> str:
         return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+    def _normalize_source_path(self, source_audio_path: str) -> str:
+        normalized = source_audio_path.strip()
+        if not normalized:
+            raise SessionCommandError(
+                code="IMPORT_SOURCE_REQUIRED",
+                message="Source audio path is required.",
+                guidance="Provide a local .wav or .mp3 file path with the import command.",
+                exit_code=1,
+            )
+        return str(Path(normalized).as_posix())
+
+    def _require_supported_import_extension(self, source_audio_path: str) -> str:
+        suffix = Path(source_audio_path).suffix.lower().lstrip(".")
+        if suffix not in SUPPORTED_IMPORT_EXTENSIONS:
+            raise SessionCommandError(
+                code="UNSUPPORTED_AUDIO_FORMAT",
+                message="Unsupported audio format for import.",
+                guidance="Use a .wav or .mp3 file and retry.",
+                exit_code=1,
+            )
+        return suffix
+
+    def _reject_duplicate_import(
+        self,
+        session: dict[str, Any],
+        source_audio_path: str,
+        *,
+        allow_failed_retry: bool,
+    ) -> None:
+        if (
+            allow_failed_retry
+            and session.get("job_status") == "failed"
+            and session.get("import_source_audio_path") == source_audio_path
+        ):
+            return
+
+        if session.get("import_source_audio_path") == source_audio_path:
+            raise SessionCommandError(
+                code="DUPLICATE_AUDIO_IMPORT",
+                message="Duplicate audio import is not allowed for this session.",
+                guidance="Use a different file or create a new session.",
+                exit_code=1,
+            )
+
+    def _transition_job_or_raise(self, session: dict[str, Any], target_state: str) -> None:
+        current = session.get("job_status")
+        if current not in JOB_ALLOWED_TRANSITIONS:
+            raise SessionCommandError(
+                code="INVALID_JOB_STATE",
+                message=f"Import job state '{current}' is invalid.",
+                guidance="Re-run the import command to initialize a new job.",
+                exit_code=1,
+            )
+
+        if target_state not in JOB_VALID_STATES:
+            raise SessionCommandError(
+                code="INVALID_JOB_TRANSITION",
+                message=f"Unknown import job state '{target_state}'.",
+                guidance="Use one of queued/running/succeeded/failed/canceled.",
+                exit_code=1,
+            )
+
+        allowed = JOB_ALLOWED_TRANSITIONS[current]
+        if target_state not in allowed:
+            raise SessionCommandError(
+                code="INVALID_JOB_TRANSITION",
+                message=f"Cannot move import job from '{current}' to '{target_state}'.",
+                guidance="Use valid job flow: queued -> running -> succeeded/failed/canceled.",
+                exit_code=1,
+            )
+        session["job_status"] = target_state
+
+    def _copy_import_audio(self, *, source_path: str, destination_relative_path: str) -> None:
+        metadata_root = self.store.metadata_file.parent.parent
+        destination = metadata_root / destination_relative_path
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source_path, destination)
+
+    def _build_progress_payload(self, session: dict[str, Any]) -> dict[str, Any]:
+        payload = dict(session)
+        job_timestamps = payload.get("job_timestamps") or {}
+        payload["progress"] = {
+            "started_at": job_timestamps.get("started_at"),
+            "ended_at": job_timestamps.get("ended_at"),
+            "current_stage": payload.get("job_status"),
+            "final_status": payload.get("job_status"),
+            "attempt": payload.get("job_attempts", 0),
+            "retry_limit": MAX_IMPORT_RETRIES,
+        }
+        return payload
