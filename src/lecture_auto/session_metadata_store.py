@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from tempfile import NamedTemporaryFile
 from typing import Any
 
@@ -103,11 +103,36 @@ class SessionMetadataStore:
             if value is not None and not isinstance(value, str):
                 raise SessionMetadataValidationError(f"Field '{field}' must be a string or null")
 
+        if session["audio_file_path"] is not None:
+            self._validate_audio_path_for_session(
+                session_id=session["session_id"],
+                audio_file_path=session["audio_file_path"],
+            )
+
         if not isinstance(session["timestamps"], dict):
             raise SessionMetadataValidationError("Field 'timestamps' must be an object")
 
         if not isinstance(session["naming_pending"], bool):
             raise SessionMetadataValidationError("Field 'naming_pending' must be a boolean")
+
+    def build_recording_path(self, session_id: str, extension: str = "wav") -> str:
+        if not session_id.strip():
+            raise SessionMetadataValidationError("session_id must be a non-empty string")
+
+        clean_extension = extension.lstrip(".").strip()
+        if not clean_extension:
+            raise SessionMetadataValidationError("Recording extension must be a non-empty string")
+
+        return f"recordings/{session_id}.{clean_extension}"
+
+    def _validate_audio_path_for_session(self, session_id: str, audio_file_path: str) -> None:
+        expected_prefix = f"recordings/{session_id}."
+        normalized = PurePosixPath(audio_file_path).as_posix()
+
+        if not normalized.startswith(expected_prefix):
+            raise SessionMetadataValidationError(
+                "Field 'audio_file_path' must follow recordings/{session_id}.* convention"
+            )
 
     def _safe_write(self, sessions: list[dict[str, Any]]) -> None:
         self.metadata_file.parent.mkdir(parents=True, exist_ok=True)

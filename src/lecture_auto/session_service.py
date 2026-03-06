@@ -5,6 +5,15 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
+from lecture_auto.capture_runtime import (
+    CaptureDependencyError,
+    CaptureDeviceError,
+    CaptureInterruptedError,
+    CapturePermissionError,
+    CaptureRuntimeAdapter,
+    CaptureRuntimeError,
+    NoopCaptureRuntimeAdapter,
+)
 from lecture_auto.session_metadata_store import SessionMetadataStore
 
 VALID_STATES = {"idle", "recording", "stopping", "completed", "failed"}
@@ -44,8 +53,13 @@ class CommandResult:
 
 
 class SessionService:
-    def __init__(self, store: SessionMetadataStore) -> None:
+    def __init__(
+        self,
+        store: SessionMetadataStore,
+        runtime_adapter: CaptureRuntimeAdapter | None = None,
+    ) -> None:
         self.store = store
+        self.runtime_adapter = runtime_adapter or NoopCaptureRuntimeAdapter()
 
     def session_create(
         self,
@@ -73,11 +87,29 @@ class SessionService:
             message=f"Session '{saved['session_id']}' created and ready to record.",
         )
 
-    def capture_start(self, session_id: str, audio_file_path: str) -> CommandResult:
+    def capture_start(self, session_id: str, audio_file_path: str | None = None) -> CommandResult:
         session = self._require_session(session_id)
         self._transition_or_raise(session, target_state="recording")
-        session["audio_file_path"] = audio_file_path
+        resolved_audio_path = audio_file_path or self.store.build_recording_path(session_id)
+
+        try:
+            handle = self.runtime_adapter.start_capture(
+                session_id=session_id,
+                output_path=resolved_audio_path,
+            )
+        except CaptureDependencyError as exc:
+            raise self.map_capture_failure("dependency") from exc
+        except CapturePermissionError as exc:
+            raise self.map_capture_failure("permission") from exc
+        except CaptureDeviceError as exc:
+            raise self.map_capture_failure("device") from exc
+        except CaptureRuntimeError as exc:
+            raise self.map_capture_failure("runtime") from exc
+
+        session["audio_file_path"] = resolved_audio_path
         session["timestamps"]["recording_started_at"] = self._utc_now()
+        session["timestamps"]["capture_process_id"] = handle.process_id
+        session["timestamps"]["capture_backend"] = handle.backend
 
         saved = self._persist_or_raise(session)
         return CommandResult(
@@ -85,7 +117,7 @@ class SessionService:
             payload=saved,
             message=(
                 f"Capture started for session '{session_id}'. "
-                f"Output file: {audio_file_path}"
+                f"Output file: {resolved_audio_path}"
             ),
         )
 
@@ -93,6 +125,19 @@ class SessionService:
         session = self._require_session(session_id)
         self._transition_or_raise(session, target_state="stopping")
         session["timestamps"]["stopping_at"] = self._utc_now()
+
+        try:
+            self.runtime_adapter.stop_capture(session_id=session_id, interrupted=not success)
+        except CaptureInterruptedError as exc:
+            raise self.map_capture_failure("interrupted") from exc
+        except CaptureDependencyError as exc:
+            raise self.map_capture_failure("dependency") from exc
+        except CapturePermissionError as exc:
+            raise self.map_capture_failure("permission") from exc
+        except CaptureDeviceError as exc:
+            raise self.map_capture_failure("device") from exc
+        except CaptureRuntimeError as exc:
+            raise self.map_capture_failure("runtime") from exc
 
         final_state = "completed" if success else "failed"
         self._transition_or_raise(session, target_state=final_state)
