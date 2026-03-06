@@ -45,6 +45,9 @@ def format_command_output(result: CommandResult, *, as_json: bool = False) -> st
     if result.command in {"audio import", "audio import retry", "audio import cancel"}:
         return _render_import_text(result.command, result.payload)
 
+    if result.command == "transcription run":
+        return _render_transcription_text(result.payload)
+
     if result.command == "session history":
         return _render_history_text(result.payload)
 
@@ -138,3 +141,17 @@ def _render_import_text(command: str, payload: dict[str, Any]) -> str:
 
 def _json_line(payload: dict[str, Any]) -> str:
     return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+
+
+def _render_transcription_text(payload: dict[str, Any]) -> str:
+    progress = payload.get("transcription_progress") or {}
+    lines = ["Transcription Completed"]
+    lines.append(f"- Session ID: {payload['session_id']}")
+    lines.append(f"- Mode: {progress.get('mode')}")
+    lines.append(f"- Stages: {' -> '.join(progress.get('stages') or [])}")
+    lines.append(f"- Current Stage: {progress.get('current_stage')}")
+    lines.append(f"- Final Status: {progress.get('final_status')}")
+    lines.append(f"- Attempt: {progress.get('attempt')}/{progress.get('retry_limit')}")
+    lines.append(f"- Transcript Path: {progress.get('transcript_file_path')}")
+    lines.append("- Next: Run 'session detail <session_id>' to review transcript metadata")
+    return "\n".join(lines)

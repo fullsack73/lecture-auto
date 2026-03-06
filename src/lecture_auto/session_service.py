@@ -16,6 +16,17 @@ from lecture_auto.capture_runtime import (
     CaptureRuntimeError,
     NoopCaptureRuntimeAdapter,
 )
+from lecture_auto.stt_config import STTConfig
+from lecture_auto.stt_runtime import (
+    APISTTRuntimeAdapter,
+    LocalSTTRuntimeAdapter,
+    STTAudioDecodeError,
+    STTConfigError,
+    STTProviderAuthError,
+    STTRuntimeAdapter,
+    STTRuntimeError,
+    STTTransientNetworkError,
+)
 from lecture_auto.session_metadata_store import SessionMetadataStore
 
 VALID_STATES = {"idle", "recording", "stopping", "completed", "failed"}
@@ -38,6 +49,7 @@ JOB_ALLOWED_TRANSITIONS = {
     "canceled": {"queued"},
 }
 MAX_IMPORT_RETRIES = 3
+MAX_STT_API_RETRIES = 2
 
 
 class SessionCommandError(RuntimeError):
@@ -71,9 +83,15 @@ class SessionService:
         self,
         store: SessionMetadataStore,
         runtime_adapter: CaptureRuntimeAdapter | None = None,
+        stt_config: STTConfig | None = None,
+        local_stt_adapter: STTRuntimeAdapter | None = None,
+        api_stt_adapter: STTRuntimeAdapter | None = None,
     ) -> None:
         self.store = store
         self.runtime_adapter = runtime_adapter or NoopCaptureRuntimeAdapter()
+        self.stt_config = stt_config or STTConfig()
+        self._local_stt_adapter = local_stt_adapter
+        self._api_stt_adapter = api_stt_adapter
 
     def session_create(
         self,
@@ -316,6 +334,107 @@ class SessionService:
             message=f"Audio import canceled for session '{session_id}'.",
         )
 
+    def transcribe_session(
+        self,
+        session_id: str,
+        *,
+        source_audio_path: str | None = None,
+    ) -> CommandResult:
+        session = self._require_session(session_id)
+        if source_audio_path is not None:
+            raise SessionCommandError(
+                code="TRANSCRIPTION_SESSION_AUDIO_ONLY",
+                message="Transcription accepts only session-linked audio.",
+                guidance="Attach/import audio to the session first, then retry transcription.",
+                exit_code=1,
+            )
+
+        audio_relative_path = session.get("audio_file_path")
+        if not isinstance(audio_relative_path, str) or not audio_relative_path.strip():
+            raise SessionCommandError(
+                code="TRANSCRIPTION_AUDIO_NOT_FOUND",
+                message="No session audio is attached for transcription.",
+                guidance="Run capture or audio import for this session first.",
+                exit_code=1,
+            )
+
+        stages = [
+            "preflight_checks",
+            "mode_provider_initialization",
+            "transcription_in_progress",
+            "file_write_complete",
+        ]
+        mode = self.stt_config.mode
+        attempt = 0
+        retry_limit = MAX_STT_API_RETRIES if mode == "api" else 0
+
+        self._run_transcription_preflight()
+
+        adapter = self._build_stt_adapter()
+        transcript_text: str | None = None
+        while True:
+            try:
+                attempt += 1
+                transcript_result = adapter.transcribe(audio_path=audio_relative_path)
+                transcript_text = transcript_result.transcript_text
+                break
+            except STTTransientNetworkError as exc:
+                if mode == "api" and attempt <= retry_limit:
+                    continue
+                self._mark_transcription_failure(session, "network/transient")
+                raise self.map_transcription_failure("network/transient") from exc
+            except STTProviderAuthError as exc:
+                self._mark_transcription_failure(session, "provider_auth")
+                raise self.map_transcription_failure("provider_auth") from exc
+            except STTAudioDecodeError as exc:
+                self._mark_transcription_failure(session, "audio_decode")
+                raise self.map_transcription_failure("audio_decode") from exc
+            except STTConfigError as exc:
+                self._mark_transcription_failure(session, "configuration")
+                raise self.map_transcription_failure("configuration") from exc
+            except STTRuntimeError as exc:
+                self._mark_transcription_failure(session, "runtime")
+                raise self.map_transcription_failure("runtime") from exc
+
+        transcript_relative_path = self.store.build_raw_transcript_path(session_id)
+        try:
+            self._write_transcript_file(
+                transcript_relative_path=transcript_relative_path,
+                transcript_text=transcript_text or "",
+            )
+        except OSError as exc:
+            self._mark_transcription_failure(session, "configuration")
+            raise SessionCommandError(
+                code="TRANSCRIPTION_WRITE_ERROR",
+                message="Failed to write raw transcript to local storage.",
+                guidance="Check filesystem permissions and available disk space, then retry.",
+                exit_code=8,
+            ) from exc
+
+        session["transcript_file_path"] = transcript_relative_path
+        session["transcription_status"] = "succeeded"
+        session["transcription_error_category"] = None
+        session["transcription_retry_count"] = max(0, attempt - 1)
+        session.setdefault("timestamps", {})["transcription_completed_at"] = self._utc_now()
+
+        saved = self._persist_or_raise(session)
+        payload = dict(saved)
+        payload["transcription_progress"] = {
+            "stages": stages,
+            "current_stage": "file_write_complete",
+            "final_status": "succeeded",
+            "attempt": attempt,
+            "retry_limit": retry_limit,
+            "mode": mode,
+            "transcript_file_path": transcript_relative_path,
+        }
+
+        return CommandResult(
+            command="transcription run",
+            payload=payload,
+            message=f"Transcription completed for session '{session_id}'.",
+        )
+
     def map_capture_failure(self, failure_kind: str) -> SessionCommandError:
         mapping = {
             "dependency": SessionCommandError(
@@ -357,6 +476,49 @@ class SessionService:
                 exit_code=7,
             )
         return mapping[failure_kind]
+
+    def map_transcription_failure(self, failure_kind: str) -> SessionCommandError:
+        mapping = {
+            "configuration": SessionCommandError(
+                code="TRANSCRIPTION_CONFIG_ERROR",
+                message="Transcription configuration is invalid.",
+                guidance="Check STT mode/provider/model settings and retry.",
+                exit_code=2,
+            ),
+            "provider_auth": SessionCommandError(
+                code="TRANSCRIPTION_PROVIDER_AUTH_ERROR",
+                message="STT provider authentication failed.",
+                guidance="Verify API key/provider settings and retry.",
+                exit_code=3,
+            ),
+            "network/transient": SessionCommandError(
+                code="TRANSCRIPTION_NETWORK_TRANSIENT_ERROR",
+                message="Transient network/provider failure during transcription.",
+                guidance="Retry later or verify provider/network availability.",
+                exit_code=4,
+            ),
+            "audio_decode": SessionCommandError(
+                code="TRANSCRIPTION_AUDIO_DECODE_ERROR",
+                message="Audio format or decoding failed during transcription.",
+                guidance="Verify session audio format/quality and retry.",
+                exit_code=5,
+            ),
+            "runtime": SessionCommandError(
+                code="TRANSCRIPTION_RUNTIME_ERROR",
+                message="Transcription failed due to an unknown runtime error.",
+                guidance="Inspect logs and retry transcription.",
+                exit_code=6,
+            ),
+        }
+        return mapping.get(
+            failure_kind,
+            SessionCommandError(
+                code="TRANSCRIPTION_RUNTIME_ERROR",
+                message="Transcription failed due to an unknown runtime error.",
+                guidance="Inspect logs and retry transcription.",
+                exit_code=6,
+            ),
+        )
 
     def _persist_or_raise(self, session: dict[str, Any]) -> dict[str, Any]:
         try:
@@ -496,3 +658,42 @@ class SessionService:
             "retry_limit": MAX_IMPORT_RETRIES,
         }
         return payload
+
+    def _run_transcription_preflight(self) -> None:
+        try:
+            self.stt_config.validate()
+        except ValueError as exc:
+            raise SessionCommandError(
+                code="TRANSCRIPTION_CONFIG_ERROR",
+                message="Transcription preflight checks failed.",
+                guidance=str(exc),
+                exit_code=2,
+            ) from exc
+
+    def _build_stt_adapter(self) -> STTRuntimeAdapter:
+        if self.stt_config.mode == "local":
+            if self._local_stt_adapter is not None:
+                return self._local_stt_adapter
+            return LocalSTTRuntimeAdapter(model_name=self.stt_config.local_model_name or "base")
+
+        if self._api_stt_adapter is not None:
+            return self._api_stt_adapter
+
+        return APISTTRuntimeAdapter(
+            provider=self.stt_config.api_provider or "openai-compatible",
+            api_key=self.stt_config.api_key or "",
+        )
+
+    def _mark_transcription_failure(self, session: dict[str, Any], category: str) -> None:
+        session["transcription_status"] = "failed"
+        session["transcription_error_category"] = category
+        retries = int(session.get("transcription_retry_count", 0))
+        session["transcription_retry_count"] = retries + 1
+        session.setdefault("timestamps", {})["transcription_failed_at"] = self._utc_now()
+        self._persist_or_raise(session)
+
+    def _write_transcript_file(self, *, transcript_relative_path: str, transcript_text: str) -> None:
+        metadata_root = self.store.metadata_file.parent.parent
+        target = metadata_root / transcript_relative_path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(transcript_text, encoding="utf-8")

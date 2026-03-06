@@ -18,6 +18,10 @@ METADATA_FIELDS = (
     "job_error_code",
     "import_source_audio_path",
     "audio_file_path",
+    "transcript_file_path",
+    "transcription_status",
+    "transcription_error_category",
+    "transcription_retry_count",
     "timestamps",
     "naming_pending",
 )
@@ -97,9 +101,14 @@ class SessionMetadataStore:
                 "job_status",
                 "job_error_code",
                 "import_source_audio_path",
+                "transcript_file_path",
+                "transcription_status",
+                "transcription_error_category",
             ):
                 normalized[key] = None
             elif key == "job_attempts":
+                normalized[key] = 0
+            elif key == "transcription_retry_count":
                 normalized[key] = 0
             elif key == "job_timestamps":
                 normalized[key] = {}
@@ -113,7 +122,14 @@ class SessionMetadataStore:
             if not isinstance(session[field], str) or not session[field].strip():
                 raise SessionMetadataValidationError(f"Field '{field}' must be a non-empty string")
 
-        optional_string_fields = ("title", "course", "audio_file_path")
+        optional_string_fields = (
+            "title",
+            "course",
+            "audio_file_path",
+            "transcript_file_path",
+            "transcription_status",
+            "transcription_error_category",
+        )
         for field in optional_string_fields:
             value = session[field]
             if value is not None and not isinstance(value, str):
@@ -141,6 +157,21 @@ class SessionMetadataStore:
             self._validate_audio_path_for_session(
                 session_id=session["session_id"],
                 audio_file_path=session["audio_file_path"],
+            )
+
+        transcript_file_path = session["transcript_file_path"]
+        if transcript_file_path is not None:
+            self._validate_transcript_path_for_session(
+                session_id=session["session_id"],
+                transcript_file_path=transcript_file_path,
+            )
+
+        if (
+            not isinstance(session["transcription_retry_count"], int)
+            or session["transcription_retry_count"] < 0
+        ):
+            raise SessionMetadataValidationError(
+                "Field 'transcription_retry_count' must be a non-negative integer"
             )
 
         if not isinstance(session["timestamps"], dict):
@@ -191,6 +222,16 @@ class SessionMetadataStore:
                 return candidate
             ordinal += 1
 
+    def build_raw_transcript_path(self, session_id: str, extension: str = "md") -> str:
+        if not session_id.strip():
+            raise SessionMetadataValidationError("session_id must be a non-empty string")
+
+        clean_extension = extension.lstrip(".").strip().lower()
+        if clean_extension not in {"md", "txt"}:
+            raise SessionMetadataValidationError("Transcript extension must be 'md' or 'txt'")
+
+        return f"transcripts/{session_id}-raw.{clean_extension}"
+
     def _validate_audio_path_for_session(self, session_id: str, audio_file_path: str) -> None:
         expected_prefixes = (
             f"recordings/{session_id}.",
@@ -202,6 +243,18 @@ class SessionMetadataStore:
         if not normalized.startswith(expected_prefixes):
             raise SessionMetadataValidationError(
                 "Field 'audio_file_path' must follow recordings/{session_id}.* convention"
+            )
+
+    def _validate_transcript_path_for_session(
+        self,
+        session_id: str,
+        transcript_file_path: str,
+    ) -> None:
+        normalized = PurePosixPath(transcript_file_path).as_posix()
+        expected_prefix = f"transcripts/{session_id}-raw."
+        if not normalized.startswith(expected_prefix):
+            raise SessionMetadataValidationError(
+                "Field 'transcript_file_path' must follow transcripts/{session_id}-raw.* convention"
             )
 
     def _safe_write(self, sessions: list[dict[str, Any]]) -> None:
