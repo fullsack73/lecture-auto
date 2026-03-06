@@ -1,0 +1,6 @@
+version: 2.0.5
+last_compiled: 2026-03-06 19:36:25
+profile: default
+multi_agent_mode: false
+single_agent_mode: true
+single_agent_tool: generic
