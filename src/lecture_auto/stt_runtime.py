@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Protocol
 
 
@@ -25,10 +25,45 @@ class STTAudioDecodeError(STTRuntimeError):
 
 
 @dataclass
+class DiarizedSegment:
+    """A single speaker-attributed segment of transcription."""
+
+    speaker: str
+    start_time: float
+    end_time: float
+    text: str
+
+
+@dataclass
 class STTResult:
     transcript_text: str
     provider: str
     mode: str
+    language: str | None = None
+    segments: list[DiarizedSegment] = field(default_factory=list)
+
+    def to_diarized_markdown(self) -> str:
+        """Format transcription with speaker diarization as Markdown."""
+        if not self.segments:
+            return self.transcript_text
+
+        lines: list[str] = []
+        current_speaker: str | None = None
+        for seg in self.segments:
+            if seg.speaker != current_speaker:
+                current_speaker = seg.speaker
+                lines.append(f"\n**{current_speaker}**\n")
+            timestamp = f"[{_format_ts(seg.start_time)} - {_format_ts(seg.end_time)}]"
+            lines.append(f"{timestamp} {seg.text}")
+
+        return "\n".join(lines).strip()
+
+
+def _format_ts(seconds: float) -> str:
+    """Convert seconds to MM:SS format."""
+    minutes = int(seconds) // 60
+    secs = int(seconds) % 60
+    return f"{minutes:02d}:{secs:02d}"
 
 
 class STTRuntimeAdapter(Protocol):

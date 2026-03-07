@@ -372,6 +372,7 @@ class SessionService:
 
         adapter = self._build_stt_adapter()
         transcript_text: str | None = None
+        transcript_result = None
         while True:
             try:
                 attempt += 1
@@ -396,11 +397,15 @@ class SessionService:
                 self._mark_transcription_failure(session, "runtime")
                 raise self.map_transcription_failure("runtime") from exc
 
+        output_text = transcript_text or ""
+        if transcript_result and transcript_result.segments:
+            output_text = transcript_result.to_diarized_markdown()
+
         transcript_relative_path = self.store.build_raw_transcript_path(session_id)
         try:
             self._write_transcript_file(
                 transcript_relative_path=transcript_relative_path,
-                transcript_text=transcript_text or "",
+                transcript_text=output_text,
             )
         except OSError as exc:
             self._mark_transcription_failure(session, "configuration")
@@ -761,10 +766,15 @@ class SessionService:
         if self.stt_config.mode == "local":
             if self._local_stt_adapter is not None:
                 return self._local_stt_adapter
-            return LocalSTTRuntimeAdapter(model_name=self.stt_config.local_model_name or "base")
+            from lecture_auto.whisper_adapter import FasterWhisperSTTRuntimeAdapter
+            return FasterWhisperSTTRuntimeAdapter(config=self.stt_config)
 
         if self._api_stt_adapter is not None:
             return self._api_stt_adapter
+
+        if self.stt_config.api_provider == "deepgram":
+            from lecture_auto.deepgram_adapter import DeepgramSTTRuntimeAdapter
+            return DeepgramSTTRuntimeAdapter(config=self.stt_config)
 
         return APISTTRuntimeAdapter(
             provider=self.stt_config.api_provider or "openai-compatible",

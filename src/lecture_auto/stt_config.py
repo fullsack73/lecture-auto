@@ -1,9 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
 STTMode = Literal["local", "api"]
+
+SUPPORTED_API_PROVIDERS = {"openai-compatible", "deepgram"}
 
 
 @dataclass
@@ -14,6 +16,8 @@ class STTConfig:
     api_provider: str | None = "openai-compatible"
     api_key: str | None = None
     local_model_name: str | None = "base"
+    language: str | None = None
+    diarization: bool = False
 
     def validate(self) -> None:
         if self.mode not in {"local", "api"}:
