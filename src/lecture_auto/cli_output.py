@@ -60,6 +60,9 @@ def format_command_output(result: CommandResult, *, as_json: bool = False) -> st
     if result.command == "transcript open":
         return _render_transcript_open(result.payload, result.message)
 
+    if result.command == "transcript refine":
+        return _render_transcript_refine(result.payload, result.message)
+
     return result.message
 
 
@@ -182,6 +185,16 @@ def _render_transcript_open(payload: dict[str, Any], message: str) -> str:
         "Transcript Review",
         f"- Session ID: {payload['session_id']}",
         f"- State: {payload['state']}",
+        f"- Result: {message}"
+    ]
+    return "\n".join(lines)
+
+
+def _render_transcript_refine(payload: dict[str, Any], message: str) -> str:
+    lines = [
+        "Transcript Refinement",
+        f"- Session ID: {payload['session_id']}",
+        f"- Source Target: {payload['target_used']}",
         f"- Result: {message}"
     ]
     return "\n".join(lines)

@@ -12,21 +12,21 @@ Assigned roles: api-engineer, testing-engineer
 **Assigned implementer:** api-engineer
 **Dependencies:** None
 
-- [ ] 1.0 Complete Configuration and LLM Adapter
-  - [ ] 1.1 Write 2-8 focused tests for Config/Adapter
+- [x] 1.0 Complete Configuration and LLM Adapter
+  - [x] 1.1 Write 2-8 focused tests for Config/Adapter
     - Test Gemini LLM integration interface and configuration validation
     - Limit to core tests (e.g., config error on missing keys, adapter method signature)
-  - [ ] 1.2 Update Config Structure
+  - [x] 1.2 Update Config Structure
     - Create/modify config dataclass (e.g., `LLMConfig`) accommodating a Gemini API key.
     - Add validation similar to `STTConfig`.
-  - [ ] 1.3 Create `LLMProviderAdapter` Interface
+  - [x] 1.3 Create `LLMProviderAdapter` Interface
     - Define methods for transcript refinement.
     - Incorporate topic context parameters and multi-language support info.
-  - [ ] 1.4 Create `GeminiLLMAdapter` Implementation
+  - [x] 1.4 Create `GeminiLLMAdapter` Implementation
     - Integrate with the Gemini API to handle prompt execution.
     - Implement the chunking logic to pass topic context effectively across segments.
     - Handle API failures (timeouts, auth) gracefully following current exception patterns.
-  - [ ] 1.5 Ensure Adapter tests pass
+  - [x] 1.5 Ensure Adapter tests pass
     - Run ONLY the newly created config/adapter tests.
 
 **Acceptance Criteria:**
@@ -40,19 +40,19 @@ Assigned roles: api-engineer, testing-engineer
 **Assigned implementer:** api-engineer
 **Dependencies:** Task Group 1
 
-- [ ] 2.0 Complete CLI and Domain Service logic
-  - [ ] 2.1 Write 2-8 focused tests for Refinement Service / CLI command
+- [x] 2.0 Complete CLI and Domain Service logic
+  - [x] 2.1 Write 2-8 focused tests for Refinement Service / CLI command
     - Test the `refine` command fallback behavior (edited vs raw missing).
     - Test that proper overwrite behavior occurs.
-  - [ ] 2.2 Update `SessionService` (or domain logic)
+  - [x] 2.2 Update `SessionService` (or domain logic)
     - Add methods to locate target file (default latest edited, fallback/flags for raw).
     - Implement file overwrite logic (save as `{session_id}-edited.md`).
     - Connect the LLM Adapter for processing the transcript.
-  - [ ] 2.3 Create `refine` CLI Command
+  - [x] 2.3 Create `refine` CLI Command
     - Add a Typer command `refine` accepting `<session-id>` and `--raw` flag.
     - Format output using the `CommandResult` pattern structure from existing codebase.
     - Ensure appropriate messaging and error handling via `SessionCommandError`.
-  - [ ] 2.4 Ensure Service and CLI tests pass
+  - [x] 2.4 Ensure Service and CLI tests pass
     - Run ONLY the newly created 2-8 tests for this group.
 
 **Acceptance Criteria:**
@@ -66,16 +66,16 @@ Assigned roles: api-engineer, testing-engineer
 **Assigned implementer:** testing-engineer
 **Dependencies:** Task Groups 1-2
 
-- [ ] 3.0 Review existing tests and fill critical gaps only
-  - [ ] 3.1 Review tests from Task Groups 1-2
+- [x] 3.0 Review existing tests and fill critical gaps only
+  - [x] 3.1 Review tests from Task Groups 1-2
     - Evaluate adapter tests and domain service tests.
     - Total existing tests expected approximately 4-16.
-  - [ ] 3.2 Analyze test coverage gaps for THIS feature only
+  - [x] 3.2 Analyze test coverage gaps for THIS feature only
     - Focus on finding missed edge cases like: missing transcript scenarios, large transcript chunking limits.
-  - [ ] 3.3 Write up to 10 additional strategic tests maximum
+  - [x] 3.3 Write up to 10 additional strategic tests maximum
     - Focus on end-to-end simulation of a `refine` command.
     - Test complete CLI-to-Storage refinement chain.
-  - [ ] 3.4 Run feature-specific tests only
+  - [x] 3.4 Run feature-specific tests only
     - Run ONLY tests related to the transcript refinement spec.
     - Verify critical workflows pass.
 

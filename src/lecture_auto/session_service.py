@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+import typer
 
 from lecture_auto.capture_runtime import (
     CaptureDependencyError,
@@ -28,6 +29,12 @@ from lecture_auto.stt_runtime import (
     STTTransientNetworkError,
 )
 from lecture_auto.session_metadata_store import SessionMetadataStore
+from lecture_auto.llm_adapter import (
+    LLMProviderAdapter,
+    LLMConfigError,
+    LLMProviderAuthError,
+    LLMTransientNetworkError,
+)
 
 VALID_STATES = {"idle", "recording", "stopping", "completed", "failed"}
 ALLOWED_TRANSITIONS = {
@@ -86,12 +93,14 @@ class SessionService:
         stt_config: STTConfig | None = None,
         local_stt_adapter: STTRuntimeAdapter | None = None,
         api_stt_adapter: STTRuntimeAdapter | None = None,
+        llm_adapter: LLMProviderAdapter | None = None,
     ) -> None:
         self.store = store
         self.runtime_adapter = runtime_adapter or NoopCaptureRuntimeAdapter()
         self.stt_config = stt_config or STTConfig()
         self._local_stt_adapter = local_stt_adapter
         self._api_stt_adapter = api_stt_adapter
+        self.llm_adapter = llm_adapter
 
     def session_create(
         self,
@@ -705,7 +714,6 @@ class SessionService:
 
         pre_edit_mtime = active_path.stat().st_mtime
         
-        import typer
         typer.launch(str(active_path.resolve()), wait=True)
 
         post_edit_mtime = active_path.stat().st_mtime
@@ -730,6 +738,91 @@ class SessionService:
             command="transcript open",
             payload={"session_id": session_id, "state": "unmodified"},
             message=f"Transcript for '{session_id}' reviewed (no changes)."
+        )
+
+    def transcript_refine(self, session_reference: str, *, raw: bool = False) -> CommandResult:
+        if not self.llm_adapter:
+            raise SessionCommandError(
+                code="LLM_NOT_CONFIGURED",
+                message="No LLM adapter configured for refinement.",
+                guidance="Configure an LLM provider (e.g., Gemini) to use the refine command.",
+                exit_code=1,
+            )
+
+        sessions = self.store.load_all()
+        session = next(
+            (r for r in sessions if r["session_id"] == session_reference or 
+             (r.get("title") and r.get("title").lower() == session_reference.lower())),
+            None
+        )
+
+        if not session:
+            raise SessionCommandError(
+                code="SESSION_NOT_FOUND",
+                message=f"Session matching '{session_reference}' was not found.",
+                guidance="Run 'lecture search <title>' to find valid sessions.",
+                exit_code=1,
+            )
+
+        session_id = session["session_id"]
+        raw_transcript_path_str = session.get("transcript_file_path")
+        if not raw_transcript_path_str:
+            raise SessionCommandError(
+                code="TRANSCRIPT_NOT_FOUND",
+                message=f"No transcript found for session '{session_id}'.",
+                guidance="Run transcription for this session first.",
+                exit_code=1,
+            )
+
+        metadata_root = self.store.metadata_file.parent.parent
+        raw_transcript_path = metadata_root / raw_transcript_path_str
+        edited_transcript_path = metadata_root / f"transcripts/{session_id}-edited.md"
+
+        target_path = raw_transcript_path if raw else (
+            edited_transcript_path if edited_transcript_path.exists() else raw_transcript_path
+        )
+
+        if not target_path.exists():
+            raise SessionCommandError(
+                code="TRANSCRIPT_FILE_MISSING",
+                message=f"Transcript file missing at '{target_path}'.",
+                guidance="Ensure the file hasn't been manually deleted.",
+                exit_code=1,
+            )
+
+        raw_text = target_path.read_text(encoding="utf-8")
+        if not raw_text.strip():
+            raise SessionCommandError(
+                code="TRANSCRIPT_EMPTY",
+                message=f"The selected transcript file is empty.",
+                guidance="Cannot refine an empty transcript.",
+                exit_code=1,
+            )
+
+        context_topic = session.get("title") or session.get("course")
+        
+        try:
+            refined_text = self.llm_adapter.refine_transcript(raw_text, context_topic=context_topic)
+        except LLMConfigError as exc:
+            raise SessionCommandError(code="LLM_CONFIG_FAILED", message=str(exc), guidance="Check LLM configuration.", exit_code=1)
+        except LLMProviderAuthError as exc:
+            raise SessionCommandError(code="LLM_AUTH_FAILED", message=str(exc), guidance="Verify your API key.", exit_code=1)
+        except LLMTransientNetworkError as exc:
+            raise SessionCommandError(code="LLM_NETWORK_ERROR", message=str(exc), guidance="Try again later.", exit_code=1)
+        except Exception as exc:
+            raise SessionCommandError(code="LLM_UNKNOWN_ERROR", message=f"Unexpected refinement failure: {exc}", guidance="Check debug logs.", exit_code=1)
+
+        self._write_transcript_file(
+            transcript_relative_path=f"transcripts/{session_id}-edited.md",
+            transcript_text=refined_text
+        )
+
+        # Output payload logic for formatting
+        target_used = "raw" if target_path == raw_transcript_path else "edited"
+        return CommandResult(
+            command="transcript refine",
+            payload={"session_id": session_id, "target_used": target_used},
+            message=f"Transcript successfully refined from {target_used} source."
         )
 
     def _copy_import_audio(self, *, source_path: str, destination_relative_path: str) -> None:
