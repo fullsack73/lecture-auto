@@ -32,7 +32,13 @@ class FakeRuntimeAdapter(CaptureRuntimeAdapter):
             backend="fake",
         )
 
-    def stop_capture(self, session_id: str, *, interrupted: bool = False) -> None:
+    def stop_capture(
+        self,
+        session_id: str,
+        *,
+        interrupted: bool = False,
+        process_id: int | None = None,
+    ) -> None:
         if self.raise_on_stop is not None:
             raise self.raise_on_stop
 
@@ -51,7 +57,8 @@ def test_capture_start_uses_runtime_adapter_and_default_session_path(tmp_path: P
 
     result = service.capture_start("session-601")
 
-    assert adapter.started == [("session-601", "recordings/session-601.wav")]
+    expected_runtime_path = str((tmp_path / "recordings/session-601.wav").resolve())
+    assert adapter.started == [("session-601", expected_runtime_path)]
     assert result.payload["audio_file_path"] == "recordings/session-601.wav"
     assert result.payload["timestamps"]["capture_process_id"] == 7777
 

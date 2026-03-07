@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from lecture_auto.stt_config import STTConfig
 from lecture_auto.stt_runtime import (
@@ -29,95 +30,76 @@ class DeepgramSTTRuntimeAdapter:
         if not audio_path.strip():
             raise STTConfigError("Audio path is required for transcription.")
 
+        DeepgramClient = None
+        sdk_mode = "legacy"
         try:
             from deepgram import DeepgramClient, PrerecordedOptions, FileSource
         except ImportError as exc:
-            raise STTConfigError(
-                "deepgram-sdk is not installed. Run: pip install deepgram-sdk"
-            ) from exc
+            try:
+                from deepgram import DeepgramClient  # type: ignore[no-redef]
+
+                sdk_mode = "v6"
+            except ImportError:
+                raise STTConfigError(
+                    "deepgram-sdk is not installed. Run: pip install deepgram-sdk"
+                ) from exc
 
         try:
-            client = DeepgramClient(self._api_key)
+            try:
+                client = DeepgramClient(api_key=self._api_key)
+            except TypeError:
+                client = DeepgramClient(self._api_key)
 
             with open(audio_path, "rb") as audio_file:
                 buffer_data = audio_file.read()
 
-            payload: FileSource = {"buffer": buffer_data}
+            if sdk_mode == "legacy":
+                payload: FileSource = {"buffer": buffer_data}
+                options = PrerecordedOptions(
+                    model="nova-2",
+                    smart_format=True,
+                    diarize=self._diarization,
+                )
+                if self._language:
+                    options.language = self._language
+                else:
+                    options.detect_language = True
 
-            options = PrerecordedOptions(
-                model="nova-2",
-                smart_format=True,
-                diarize=self._diarization,
-            )
-            if self._language:
-                options.language = self._language
+                response = client.listen.rest.v("1").transcribe_file(payload, options)
             else:
-                options.detect_language = True
+                request_kwargs = {
+                    "request": buffer_data,
+                    "model": "nova-2",
+                    "smart_format": True,
+                    "diarize": self._diarization,
+                    "paragraphs": True,
+                }
+                if self._language:
+                    request_kwargs["language"] = self._language
+                else:
+                    request_kwargs["detect_language"] = True
 
-            response = client.listen.rest.v("1").transcribe_file(payload, options)
+                response = client.listen.v1.media.transcribe_file(**request_kwargs)
 
             transcript_text = ""
             segments: list[DiarizedSegment] = []
             detected_language: str | None = self._language
 
-            results = response.results
-            if results and results.channels:
-                channel = results.channels[0]
-                if channel.alternatives:
-                    alt = channel.alternatives[0]
-                    transcript_text = alt.transcript or ""
+            results = self._field(response, "results")
+            channels = self._field(results, "channels") or []
+            if channels:
+                channel = channels[0]
+                alternatives = self._field(channel, "alternatives") or []
+                if alternatives:
+                    alt = alternatives[0]
+                    transcript_text = self._field(alt, "transcript") or ""
 
-                    if (
-                        hasattr(alt, "paragraphs")
-                        and alt.paragraphs
-                        and hasattr(alt.paragraphs, "paragraphs")
-                    ):
-                        for para in alt.paragraphs.paragraphs:
-                            speaker_label = f"Speaker {para.speaker + 1}" if hasattr(para, "speaker") else "Speaker"
-                            for sentence in para.sentences:
-                                segments.append(
-                                    DiarizedSegment(
-                                        speaker=speaker_label,
-                                        start_time=sentence.start,
-                                        end_time=sentence.end,
-                                        text=sentence.text,
-                                    )
-                                )
+                    if self._diarization:
+                        segments = self._extract_segments(alt)
 
-                    if not segments and hasattr(alt, "words") and alt.words:
-                        current_speaker: int | None = None
-                        current_text_parts: list[str] = []
-                        seg_start = 0.0
-
-                        for word in alt.words:
-                            word_speaker = getattr(word, "speaker", None)
-                            if word_speaker != current_speaker:
-                                if current_text_parts and current_speaker is not None:
-                                    segments.append(
-                                        DiarizedSegment(
-                                            speaker=f"Speaker {current_speaker + 1}",
-                                            start_time=seg_start,
-                                            end_time=word.start,
-                                            text=" ".join(current_text_parts),
-                                        )
-                                    )
-                                current_speaker = word_speaker
-                                current_text_parts = []
-                                seg_start = word.start
-                            current_text_parts.append(word.word)
-
-                        if current_text_parts and current_speaker is not None:
-                            segments.append(
-                                DiarizedSegment(
-                                    speaker=f"Speaker {current_speaker + 1}",
-                                    start_time=seg_start,
-                                    end_time=alt.words[-1].end,
-                                    text=" ".join(current_text_parts),
-                                )
-                            )
-
-                if hasattr(channel, "detected_language") and channel.detected_language:
-                    detected_language = channel.detected_language
+                channel_language = self._field(channel, "detected_language")
+                if channel_language:
+                    detected_language = channel_language
 
             return STTResult(
                 transcript_text=transcript_text,
@@ -126,6 +108,9 @@ class DeepgramSTTRuntimeAdapter:
                 language=detected_language,
                 segments=segments,
             )
+
+        except FileNotFoundError as exc:
+            raise STTConfigError(f"Audio file not found: {audio_path}") from exc
 
         except Exception as exc:
             error_msg = str(exc).lower()
@@ -137,6 +122,80 @@ class DeepgramSTTRuntimeAdapter:
                 raise STTTransientNetworkError(
                     f"Deepgram network error: {exc}"
                 ) from exc
-            raise STTTransientNetworkError(
+            raise STTConfigError(
                 f"Deepgram transcription failed: {exc}"
             ) from exc
+
+    def _field(self, obj: Any, name: str) -> Any:
+        if obj is None:
+            return None
+        if isinstance(obj, dict):
+            return obj.get(name)
+        return getattr(obj, name, None)
+
+    def _extract_segments(self, alt: Any) -> list[DiarizedSegment]:
+        segments: list[DiarizedSegment] = []
+
+        paragraphs = self._field(self._field(alt, "paragraphs"), "paragraphs") or []
+        for para in paragraphs:
+            para_speaker = self._field(para, "speaker")
+            speaker_label = f"Speaker {int(para_speaker) + 1}" if para_speaker is not None else "Speaker"
+            sentences = self._field(para, "sentences") or []
+            for sentence in sentences:
+                text = self._field(sentence, "text") or ""
+                if not text:
+                    continue
+                segments.append(
+                    DiarizedSegment(
+                        speaker=speaker_label,
+                        start_time=float(self._field(sentence, "start") or 0.0),
+                        end_time=float(self._field(sentence, "end") or 0.0),
+                        text=text,
+                    )
+                )
+
+        if segments:
+            return segments
+
+        words = self._field(alt, "words") or []
+        current_speaker: int | None = None
+        current_text_parts: list[str] = []
+        seg_start = 0.0
+        last_end = 0.0
+
+        for word in words:
+            word_speaker = self._field(word, "speaker")
+            start = float(self._field(word, "start") or last_end)
+            end = float(self._field(word, "end") or start)
+            text = self._field(word, "word") or ""
+            if not text:
+                continue
+
+            if word_speaker != current_speaker:
+                if current_text_parts and current_speaker is not None:
+                    segments.append(
+                        DiarizedSegment(
+                            speaker=f"Speaker {current_speaker + 1}",
+                            start_time=seg_start,
+                            end_time=last_end,
+                            text=" ".join(current_text_parts),
+                        )
+                    )
+                current_speaker = word_speaker
+                current_text_parts = []
+                seg_start = start
+
+            current_text_parts.append(text)
+            last_end = end
+
+        if current_text_parts and current_speaker is not None:
+            segments.append(
+                DiarizedSegment(
+                    speaker=f"Speaker {current_speaker + 1}",
+                    start_time=seg_start,
+                    end_time=last_end,
+                    text=" ".join(current_text_parts),
+                )
+            )
+
+        return segments

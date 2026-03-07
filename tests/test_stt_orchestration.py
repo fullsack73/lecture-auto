@@ -144,3 +144,42 @@ def test_provider_auth_error_maps_to_expected_category(tmp_path: Path) -> None:
         service.transcribe_session("session-1005")
 
     assert exc.value.code == "TRANSCRIPTION_PROVIDER_AUTH_ERROR"
+
+
+def test_deepgram_path_falls_back_to_cwd_relative_audio(tmp_path: Path) -> None:
+    class CapturingAdapter:
+        def __init__(self) -> None:
+            self.seen_audio_path: str | None = None
+
+        def transcribe(self, *, audio_path: str) -> STTResult:
+            self.seen_audio_path = audio_path
+            return STTResult(
+                transcript_text=f"api transcript for {audio_path}",
+                provider="deepgram",
+                mode="api",
+            )
+
+    adapter = CapturingAdapter()
+    service = _service(
+        tmp_path,
+        config=STTConfig(mode="api", api_provider="deepgram", api_key="k"),
+        api_adapter=adapter,
+    )
+    service.session_create("session-1006", "2026-03-06")
+
+    # Simulate legacy path where recording was created under cwd, not metadata root.
+    legacy_relative = Path("recordings/session-1006.wav")
+    legacy_relative.parent.mkdir(parents=True, exist_ok=True)
+    legacy_relative.write_bytes(b"wav")
+
+    try:
+        session = service.session_detail("session-1006").payload
+        session["audio_file_path"] = "recordings/session-1006.wav"
+        service.store.upsert(session)
+
+        result = service.transcribe_session("session-1006")
+        assert result.payload["transcription_progress"]["final_status"] == "succeeded"
+        assert adapter.seen_audio_path is not None
+        assert adapter.seen_audio_path.endswith("recordings/session-1006.wav")
+    finally:
+        legacy_relative.unlink(missing_ok=True)

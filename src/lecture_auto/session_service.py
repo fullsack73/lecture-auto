@@ -133,11 +133,15 @@ class SessionService:
         session = self._require_session(session_id)
         self._transition_or_raise(session, target_state="recording")
         resolved_audio_path = audio_file_path or self.store.build_recording_path(session_id)
+        metadata_root = self.store.metadata_file.parent.parent
+        runtime_output_path = resolved_audio_path
+        if not Path(resolved_audio_path).is_absolute():
+            runtime_output_path = str((metadata_root / resolved_audio_path).resolve())
 
         try:
             handle = self.runtime_adapter.start_capture(
                 session_id=session_id,
-                output_path=resolved_audio_path,
+                output_path=runtime_output_path,
             )
         except CaptureDependencyError as exc:
             raise self.map_capture_failure("dependency") from exc
@@ -167,9 +171,15 @@ class SessionService:
         session = self._require_session(session_id)
         self._transition_or_raise(session, target_state="stopping")
         session["timestamps"]["stopping_at"] = self._utc_now()
+        process_id_raw = session.get("timestamps", {}).get("capture_process_id")
+        process_id = process_id_raw if isinstance(process_id_raw, int) else None
 
         try:
-            self.runtime_adapter.stop_capture(session_id=session_id, interrupted=not success)
+            self.runtime_adapter.stop_capture(
+                session_id=session_id,
+                interrupted=not success,
+                process_id=process_id,
+            )
         except CaptureInterruptedError as exc:
             raise self.map_capture_failure("interrupted") from exc
         except CaptureDependencyError as exc:
@@ -374,6 +384,7 @@ class SessionService:
             "transcription_in_progress",
             "file_write_complete",
         ]
+        metadata_root = self.store.metadata_file.parent.parent
         mode = self.stt_config.mode
         attempt = 0
         retry_limit = MAX_STT_API_RETRIES if mode == "api" else 0
@@ -381,12 +392,22 @@ class SessionService:
         self._run_transcription_preflight()
 
         adapter = self._build_stt_adapter()
+        adapter_audio_path = audio_relative_path
+        if mode == "api" and self.stt_config.api_provider == "deepgram":
+            candidate = Path(audio_relative_path)
+            if not candidate.is_absolute():
+                metadata_candidate = (metadata_root / candidate).resolve()
+                cwd_candidate = candidate.resolve()
+                adapter_audio_path = str(
+                    metadata_candidate if metadata_candidate.exists() else cwd_candidate
+                )
+
         transcript_text: str | None = None
         transcript_result = None
         while True:
             try:
                 attempt += 1
-                transcript_result = adapter.transcribe(audio_path=audio_relative_path)
+                transcript_result = adapter.transcribe(audio_path=adapter_audio_path)
                 transcript_text = transcript_result.transcript_text
                 break
             except STTTransientNetworkError as exc:

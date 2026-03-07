@@ -15,7 +15,13 @@ class StableRuntimeAdapter:
             backend="stable-runtime",
         )
 
-    def stop_capture(self, session_id: str, *, interrupted: bool = False) -> None:
+    def stop_capture(
+        self,
+        session_id: str,
+        *,
+        interrupted: bool = False,
+        process_id: int | None = None,
+    ) -> None:
         return None
 
 

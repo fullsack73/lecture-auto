@@ -19,7 +19,13 @@ class IntegrationRuntimeAdapter:
         self.active[session_id] = output_path
         return CaptureHandle(session_id=session_id, output_path=output_path, process_id=9021, backend="integration")
 
-    def stop_capture(self, session_id: str, *, interrupted: bool = False) -> None:
+    def stop_capture(
+        self,
+        session_id: str,
+        *,
+        interrupted: bool = False,
+        process_id: int | None = None,
+    ) -> None:
         self.active.pop(session_id, None)
 
 

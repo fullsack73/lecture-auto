@@ -55,8 +55,11 @@ class TestDeepgramAdapter:
         mock_deepgram.PrerecordedOptions = MagicMock
         mock_deepgram.FileSource = dict
 
-        mock_client_instance.listen.rest.v.return_value.transcribe_file.side_effect = (
-            Exception("401 Unauthorized")
+        mock_client_instance.listen.v1.media.transcribe_file.side_effect = Exception(
+            "401 Unauthorized"
+        )
+        mock_client_instance.listen.rest.v.return_value.transcribe_file.side_effect = Exception(
+            "401 Unauthorized"
         )
 
         with patch.dict("sys.modules", {"deepgram": mock_deepgram}):

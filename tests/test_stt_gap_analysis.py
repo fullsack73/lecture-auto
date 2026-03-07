@@ -98,8 +98,11 @@ def test_deepgram_adapter_network_error_maps_to_transient() -> None:
     mock_deepgram.DeepgramClient.return_value = mock_client
     mock_deepgram.PrerecordedOptions = MagicMock
     mock_deepgram.FileSource = dict
-    mock_client.listen.rest.v.return_value.transcribe_file.side_effect = (
-        Exception("Connection timeout error")
+    mock_client.listen.v1.media.transcribe_file.side_effect = Exception(
+        "Connection timeout error"
+    )
+    mock_client.listen.rest.v.return_value.transcribe_file.side_effect = Exception(
+        "Connection timeout error"
     )
 
     with patch.dict("sys.modules", {"deepgram": mock_deepgram}):

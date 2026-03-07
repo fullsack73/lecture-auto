@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import subprocess
+import os
+import signal
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
@@ -38,7 +41,13 @@ class CaptureRuntimeAdapter(Protocol):
     def start_capture(self, session_id: str, output_path: str) -> CaptureHandle:
         ...
 
-    def stop_capture(self, session_id: str, *, interrupted: bool = False) -> None:
+    def stop_capture(
+        self,
+        session_id: str,
+        *,
+        interrupted: bool = False,
+        process_id: int | None = None,
+    ) -> None:
         ...
 
 
@@ -63,7 +72,13 @@ class NoopCaptureRuntimeAdapter:
         self._active[session_id] = handle
         return handle
 
-    def stop_capture(self, session_id: str, *, interrupted: bool = False) -> None:
+    def stop_capture(
+        self,
+        session_id: str,
+        *,
+        interrupted: bool = False,
+        process_id: int | None = None,
+    ) -> None:
         if session_id not in self._active:
             raise CaptureRuntimeError(f"No active capture for session '{session_id}'")
 
@@ -114,8 +129,17 @@ class FFmpegCaptureRuntimeAdapter:
             backend="ffmpeg",
         )
 
-    def stop_capture(self, session_id: str, *, interrupted: bool = False) -> None:
+    def stop_capture(
+        self,
+        session_id: str,
+        *,
+        interrupted: bool = False,
+        process_id: int | None = None,
+    ) -> None:
         process = self._processes.pop(session_id, None)
+        if process is None and process_id is not None:
+            self._stop_by_pid(process_id=process_id, interrupted=interrupted)
+            return
         if process is None:
             raise CaptureRuntimeError(f"No active capture for session '{session_id}'")
 
@@ -129,3 +153,34 @@ class FFmpegCaptureRuntimeAdapter:
         except subprocess.TimeoutExpired:
             process.kill()
             raise CaptureRuntimeError("Capture process did not stop gracefully")
+
+    def _stop_by_pid(self, *, process_id: int, interrupted: bool) -> None:
+        try:
+            sig = signal.SIGKILL if interrupted else signal.SIGTERM
+            os.kill(process_id, sig)
+        except ProcessLookupError:
+            return
+        except PermissionError as exc:
+            raise CapturePermissionError("OS permissions denied capture shutdown") from exc
+        except OSError as exc:
+            raise CaptureRuntimeError("Capture process stop failed") from exc
+
+        if interrupted:
+            return
+
+        deadline = time.time() + 5
+        while time.time() < deadline:
+            try:
+                os.kill(process_id, 0)
+            except ProcessLookupError:
+                return
+            except OSError:
+                return
+            time.sleep(0.1)
+
+        try:
+            os.kill(process_id, signal.SIGKILL)
+        except ProcessLookupError:
+            return
+        except OSError as exc:
+            raise CaptureRuntimeError("Capture process did not stop gracefully") from exc
