@@ -10,11 +10,9 @@ from lecture_auto.llm_config import LLMConfig
 # Mock modules to avoid ImportError when llm_adapter is imported
 mock_google = MagicMock()
 mock_genai = MagicMock()
-mock_google.generativeai = mock_genai
+mock_google.genai = mock_genai
 sys.modules['google'] = mock_google
-sys.modules['google.generativeai'] = mock_genai
-sys.modules['google.api_core'] = MagicMock()
-sys.modules['google.api_core.exceptions'] = MagicMock()
+sys.modules['google.genai'] = mock_genai
 
 from lecture_auto.llm_adapter import (
     GeminiLLMAdapter,
@@ -33,12 +31,11 @@ def test_llm_config_validation_passes_with_api_key() -> None:
 
 
 def test_gemini_adapter_initializes_with_valid_config() -> None:
-    sys.modules['google.generativeai'].reset_mock()
+    sys.modules['google.genai'].reset_mock()
     config = LLMConfig(api_key="valid-key")
     adapter = GeminiLLMAdapter(config)
-    
-    sys.modules['google.generativeai'].configure.assert_called_once_with(api_key="valid-key")
-    sys.modules['google.generativeai'].GenerativeModel.assert_called_once_with(config.model_name)
+
+    sys.modules['google.genai'].Client.assert_called_once_with(api_key="valid-key")
 
 
 def test_gemini_adapter_missing_api_key_raises_error() -> None:
@@ -52,3 +49,17 @@ def test_gemini_adapter_refine_transcript_empty_text() -> None:
     adapter = GeminiLLMAdapter(config)
     result = adapter.refine_transcript("   ")
     assert result == "   "
+
+
+def test_model_name_normalization_maps_gemini_3_0_alias() -> None:
+    assert (
+        GeminiLLMAdapter._normalize_model_name("gemini-3.0-flash-preview")
+        == "gemini-3-flash-preview"
+    )
+
+
+def test_model_name_normalization_strips_models_prefix() -> None:
+    assert (
+        GeminiLLMAdapter._normalize_model_name("models/gemini-3-flash-preview")
+        == "gemini-3-flash-preview"
+    )

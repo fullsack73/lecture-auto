@@ -8,7 +8,7 @@ class LLMConfig:
     """Configuration contract for selecting LLM provider options."""
 
     api_key: str | None = None
-    model_name: str = "gemini-1.5-flash"
+    model_name: str = "gemini-3-flash-preview"
     chunk_size: int = 4000  # Number of characters per chunk for long transcripts
 
     def validate(self) -> None:

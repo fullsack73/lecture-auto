@@ -27,7 +27,12 @@ def _build_service() -> SessionService:
     api_key = os.environ.get("GEMINI_API_KEY")
     if api_key and api_key.strip():
         try:
-            llm_adapter = GeminiLLMAdapter(LLMConfig(api_key=api_key))
+            llm_adapter = GeminiLLMAdapter(
+                LLMConfig(
+                    api_key=api_key,
+                    model_name=os.environ.get("LLM_MODEL", "gemini-3-flash-preview"),
+                )
+            )
         except LLMConfigError:
             llm_adapter = None
 

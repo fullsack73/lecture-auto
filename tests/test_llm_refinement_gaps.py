@@ -14,11 +14,9 @@ from lecture_auto.llm_config import LLMConfig
 import sys
 mock_google = MagicMock()
 mock_genai = MagicMock()
-mock_google.generativeai = mock_genai
+mock_google.genai = mock_genai
 sys.modules['google'] = mock_google
-sys.modules['google.generativeai'] = mock_genai
-sys.modules['google.api_core'] = MagicMock()
-sys.modules['google.api_core.exceptions'] = MagicMock()
+sys.modules['google.genai'] = mock_genai
 
 from lecture_auto.llm_adapter import GeminiLLMAdapter
 
@@ -56,9 +54,11 @@ def test_end_to_end_refinement_chunking(store: SessionMetadataStore) -> None:
     raw_path.write_text(long_word)
     
     # Configure the mock adapter
-    mock_model_instance = MagicMock()
-    mock_model_instance.generate_content.return_value.text = "Refined Mock Output Chunk"
-    mock_genai.GenerativeModel.return_value = mock_model_instance
+    mock_client_instance = MagicMock()
+    mock_response = MagicMock()
+    mock_response.text = "Refined Mock Output Chunk"
+    mock_client_instance.models.generate_content.return_value = mock_response
+    mock_genai.Client.return_value = mock_client_instance
     
     config = LLMConfig(api_key="valid", chunk_size=4000)
     adapter = GeminiLLMAdapter(config)
@@ -67,7 +67,7 @@ def test_end_to_end_refinement_chunking(store: SessionMetadataStore) -> None:
     result = service.transcript_refine("long-session-1")
     
     # Since text is ~5000 chars, it should be chunked into 2 calls
-    assert mock_model_instance.generate_content.call_count == 2
+    assert mock_client_instance.models.generate_content.call_count == 2
     
     edited_path = transcripts_dir / "long-session-1-edited.md"
     assert edited_path.exists()

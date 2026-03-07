@@ -44,14 +44,26 @@ class GeminiLLMAdapter:
         self.config = config
 
         try:
-            import google.generativeai as genai
+            from google import genai
         except ImportError as exc:
             raise LLMConfigError(
-                "google-generativeai is not installed. Run: pip install google-generativeai"
+                "google-genai is not installed. Run: pip install google-genai"
             ) from exc
 
-        genai.configure(api_key=self.config.api_key)
-        self.model = genai.GenerativeModel(self.config.model_name)
+        self.client = genai.Client(api_key=self.config.api_key)
+
+    @staticmethod
+    def _normalize_model_name(model_name: str) -> str:
+        """Normalizes common Gemini model aliases to API-accepted IDs."""
+        normalized = (model_name or "").strip()
+        if normalized.startswith("models/"):
+            normalized = normalized.split("/", 1)[1]
+
+        # Gemini 3 preview IDs use `gemini-3-*`, not `gemini-3.0-*`.
+        if normalized.startswith("gemini-3.0-"):
+            normalized = normalized.replace("gemini-3.0-", "gemini-3-", 1)
+
+        return normalized
 
     def refine_transcript(self, raw_text: str, context_topic: str | None = None) -> str:
         """Refines the transcript in chunks using the Gemini model."""
@@ -88,10 +100,13 @@ class GeminiLLMAdapter:
                 chunk = raw_text[start_idx:end_idx]
                 
                 prompt = f"{system_instructions}\n\nRefine the following text:\n{chunk}"
-                
-                # We use model.generate_content for Gemini API call
-                response = self.model.generate_content(prompt)
-                refined_chunks.append(response.text.strip())
+
+                response = self.client.models.generate_content(
+                    model=self._normalize_model_name(self.config.model_name),
+                    contents=prompt,
+                )
+                text = (getattr(response, "text", "") or "").strip()
+                refined_chunks.append(text)
                 
                 start_idx = end_idx + 1 if end_idx < len(raw_text) and raw_text[end_idx] == ' ' else end_idx
 
@@ -103,6 +118,8 @@ class GeminiLLMAdapter:
             raise LLMTransientNetworkError(f"Gemini network/timeout error: {exc}") from exc
         except Exception as exc:
             error_msg = str(exc).lower()
+            if "404" in error_msg or "model" in error_msg and "not found" in error_msg:
+                raise LLMConfigError(f"Gemini model configuration failed: {exc}") from exc
             if "api_key_invalid" in error_msg or "unauthorized" in error_msg or "401" in error_msg or "403" in error_msg:
                 raise LLMProviderAuthError(f"Gemini authentication failed: {exc}") from exc
             if "timeout" in error_msg or "connection" in error_msg or "503" in error_msg or "504" in error_msg:
@@ -153,8 +170,12 @@ class GeminiLLMAdapter:
                     f"Template:\n{template}\n\n"
                     f"Transcript chunk:\n{chunk}\n"
                 )
-                response = self.model.generate_content(prompt)
-                note_chunks.append(response.text.strip())
+                response = self.client.models.generate_content(
+                    model=self._normalize_model_name(self.config.model_name),
+                    contents=prompt,
+                )
+                text = (getattr(response, "text", "") or "").strip()
+                note_chunks.append(text)
 
                 start_idx = (
                     end_idx + 1
@@ -170,6 +191,8 @@ class GeminiLLMAdapter:
             raise LLMTransientNetworkError(f"Gemini network/timeout error: {exc}") from exc
         except Exception as exc:
             error_msg = str(exc).lower()
+            if "404" in error_msg or "model" in error_msg and "not found" in error_msg:
+                raise LLMConfigError(f"Gemini model configuration failed: {exc}") from exc
             if (
                 "api_key_invalid" in error_msg
                 or "unauthorized" in error_msg
