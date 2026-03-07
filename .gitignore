@@ -1,1 +1,3 @@
 .venv/*
+src/lecture_auto.egg-info/
+src/lecture_auto/__pycache__/
