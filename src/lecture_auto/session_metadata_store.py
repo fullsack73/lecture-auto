@@ -232,6 +232,16 @@ class SessionMetadataStore:
 
         return f"transcripts/{session_id}-raw.{clean_extension}"
 
+    def build_note_path(self, session_id: str, extension: str = "md") -> str:
+        if not session_id.strip():
+            raise SessionMetadataValidationError("session_id must be a non-empty string")
+
+        clean_extension = extension.lstrip(".").strip().lower()
+        if clean_extension != "md":
+            raise SessionMetadataValidationError("Note extension must be 'md'")
+
+        return f"notes/{session_id}.{clean_extension}"
+
     def _validate_audio_path_for_session(self, session_id: str, audio_file_path: str) -> None:
         expected_prefixes = (
             f"recordings/{session_id}.",

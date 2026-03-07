@@ -57,6 +57,7 @@ JOB_ALLOWED_TRANSITIONS = {
 }
 MAX_IMPORT_RETRIES = 3
 MAX_STT_API_RETRIES = 2
+DEFAULT_NOTE_TEMPLATE_NAME = "bullet-summary"
 
 
 class SessionCommandError(RuntimeError):
@@ -825,6 +826,84 @@ class SessionService:
             message=f"Transcript successfully refined from {target_used} source."
         )
 
+    def summarize_session(
+        self,
+        session_reference: str,
+        *,
+        template_name: str | None = None,
+        preview: bool = False,
+    ) -> CommandResult:
+        if not self.llm_adapter:
+            raise SessionCommandError(
+                code="LLM_NOT_CONFIGURED",
+                message="No LLM adapter configured for summarize.",
+                guidance="Configure an LLM provider (e.g., Gemini) to use summarize.",
+                exit_code=1,
+            )
+
+        session = self._resolve_session_for_reference(session_reference)
+        session_id = session["session_id"]
+        transcript_text, transcript_source = self._load_summary_transcript(session)
+        resolved_template_name, template_text = self._resolve_note_template(template_name)
+
+        context_topic = session.get("title") or session.get("course")
+        try:
+            notes = self.llm_adapter.generate_notes(
+                transcript=transcript_text,
+                template=template_text,
+                context_topic=context_topic,
+            )
+        except LLMConfigError as exc:
+            raise SessionCommandError(
+                code="LLM_CONFIG_FAILED",
+                message=str(exc),
+                guidance="Check LLM configuration.",
+                exit_code=1,
+            ) from exc
+        except LLMProviderAuthError as exc:
+            raise SessionCommandError(
+                code="LLM_AUTH_FAILED",
+                message=str(exc),
+                guidance="Verify your API key.",
+                exit_code=1,
+            ) from exc
+        except LLMTransientNetworkError as exc:
+            raise SessionCommandError(
+                code="LLM_NETWORK_ERROR",
+                message=str(exc),
+                guidance="Try again later.",
+                exit_code=1,
+            ) from exc
+        except Exception as exc:
+            raise SessionCommandError(
+                code="LLM_UNKNOWN_ERROR",
+                message=f"Unexpected summarize failure: {exc}",
+                guidance="Check debug logs.",
+                exit_code=1,
+            ) from exc
+
+        note_relative_path = self.store.build_note_path(session_id)
+        payload = {
+            "session_id": session_id,
+            "template": resolved_template_name,
+            "preview": preview,
+            "source_transcript": transcript_source,
+            "note_file_path": note_relative_path,
+        }
+
+        if preview:
+            payload["notes"] = notes
+            return CommandResult(command="summarize", payload=payload, message=notes)
+
+        self._write_note_file(note_relative_path=note_relative_path, note_text=notes)
+        return CommandResult(
+            command="summarize",
+            payload=payload,
+            message=(
+                f"Summary notes saved for session '{session_id}' at '{note_relative_path}'."
+            ),
+        )
+
     def _copy_import_audio(self, *, source_path: str, destination_relative_path: str) -> None:
         metadata_root = self.store.metadata_file.parent.parent
         destination = metadata_root / destination_relative_path
@@ -887,3 +966,84 @@ class SessionService:
         target = metadata_root / transcript_relative_path
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(transcript_text, encoding="utf-8")
+
+    def _write_note_file(self, *, note_relative_path: str, note_text: str) -> None:
+        metadata_root = self.store.metadata_file.parent.parent
+        target = metadata_root / note_relative_path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(note_text, encoding="utf-8")
+
+    def _resolve_session_for_reference(self, session_reference: str) -> dict[str, Any]:
+        sessions = self.store.list_recent_first()
+        if not sessions:
+            raise SessionCommandError(
+                code="SESSION_NOT_FOUND",
+                message="No sessions are available.",
+                guidance="Run 'session create' to create your first session.",
+                exit_code=1,
+            )
+
+        if not session_reference.strip():
+            return sessions[0]
+
+        reference = session_reference.strip().lower()
+        for row in sessions:
+            if row["session_id"] == session_reference:
+                return row
+            title = row.get("title")
+            if isinstance(title, str) and title.lower() == reference:
+                return row
+
+        raise SessionCommandError(
+            code="SESSION_NOT_FOUND",
+            message=f"Session matching '{session_reference}' was not found.",
+            guidance="Run 'session history' to find a valid session id.",
+            exit_code=1,
+        )
+
+    def _load_summary_transcript(self, session: dict[str, Any]) -> tuple[str, str]:
+        session_id = session["session_id"]
+        metadata_root = self.store.metadata_file.parent.parent
+        edited_path = metadata_root / f"transcripts/{session_id}-edited.md"
+
+        raw_relative_path = session.get("transcript_file_path") or self.store.build_raw_transcript_path(
+            session_id
+        )
+        raw_path = metadata_root / raw_relative_path
+
+        target_path = edited_path if edited_path.exists() else raw_path
+        source_name = "edited" if target_path == edited_path else "raw"
+        if not target_path.exists():
+            raise SessionCommandError(
+                code="TRANSCRIPT_NOT_FOUND",
+                message=f"No transcript found for session '{session_id}'.",
+                guidance="Run transcription for this session first.",
+                exit_code=1,
+            )
+
+        return target_path.read_text(encoding="utf-8"), source_name
+
+    def _resolve_note_template(self, template_name: str | None) -> tuple[str, str]:
+        resolved_name = (template_name or DEFAULT_NOTE_TEMPLATE_NAME).strip()
+        if not resolved_name:
+            resolved_name = DEFAULT_NOTE_TEMPLATE_NAME
+        if resolved_name.lower().endswith(".md"):
+            resolved_name = resolved_name[:-3]
+
+        preset_dir = Path(__file__).resolve().parent / "templates"
+        user_dir = Path.home() / ".lecture_auto" / "templates"
+        candidates = [
+            preset_dir / f"{resolved_name}.md",
+            user_dir / f"{resolved_name}.md",
+        ]
+
+        for path in candidates:
+            if path.exists() and path.is_file():
+                return resolved_name, path.read_text(encoding="utf-8")
+
+        raise SessionCommandError(
+            code="TEMPLATE_NOT_FOUND",
+            message=f"Template '{resolved_name}' was not found.",
+            guidance="Use a preset template or create ~/.lecture_auto/templates/<name>.md.",
+            exit_code=1,
+        )

@@ -25,6 +25,15 @@ class LLMProviderAdapter(Protocol):
         """Refines transcript by fixing typos, spacing, and wording, while preserving meaning."""
         ...
 
+    def generate_notes(
+        self,
+        transcript: str,
+        template: str,
+        context_topic: str | None = None,
+    ) -> str:
+        """Generates notes from transcript text and a markdown template."""
+        ...
+
 
 class GeminiLLMAdapter:
     """Implementation of Gemini API for transcript refinement."""
@@ -99,4 +108,81 @@ class GeminiLLMAdapter:
             if "timeout" in error_msg or "connection" in error_msg or "503" in error_msg or "504" in error_msg:
                 raise LLMTransientNetworkError(f"Gemini network error: {exc}") from exc
             
+            raise LLMTransientNetworkError(f"Gemini LLM request failed: {exc}") from exc
+
+    def generate_notes(
+        self,
+        transcript: str,
+        template: str,
+        context_topic: str | None = None,
+    ) -> str:
+        """Generates lecture notes from transcript text and template in chunks."""
+        if not transcript or not transcript.strip():
+            return transcript
+
+        try:
+            from google.api_core.exceptions import PermissionDenied, DeadlineExceeded
+        except ImportError:
+            PermissionDenied = Exception
+            DeadlineExceeded = Exception
+
+        topic_prompt = f"The lecture topic is '{context_topic}'. " if context_topic else ""
+        system_instructions = (
+            f"You are a helpful assistant that generates lecture notes. {topic_prompt}"
+            "Use the provided markdown template exactly as the output structure. "
+            "Fill each section with concise, accurate lecture notes from the transcript. "
+            "Do not invent facts not present in the transcript."
+        )
+
+        chunk_size = self.config.chunk_size
+        note_chunks: list[str] = []
+        start_idx = 0
+
+        try:
+            while start_idx < len(transcript):
+                end_idx = min(start_idx + chunk_size, len(transcript))
+
+                if end_idx < len(transcript):
+                    last_space = transcript.rfind(" ", start_idx, end_idx)
+                    if last_space > start_idx + chunk_size // 2:
+                        end_idx = last_space
+
+                chunk = transcript[start_idx:end_idx]
+                prompt = (
+                    f"{system_instructions}\n\n"
+                    f"Template:\n{template}\n\n"
+                    f"Transcript chunk:\n{chunk}\n"
+                )
+                response = self.model.generate_content(prompt)
+                note_chunks.append(response.text.strip())
+
+                start_idx = (
+                    end_idx + 1
+                    if end_idx < len(transcript) and transcript[end_idx] == " "
+                    else end_idx
+                )
+
+            return "\n\n".join(note_chunks)
+
+        except PermissionDenied as exc:
+            raise LLMProviderAuthError(f"Gemini authentication failed: {exc}") from exc
+        except DeadlineExceeded as exc:
+            raise LLMTransientNetworkError(f"Gemini network/timeout error: {exc}") from exc
+        except Exception as exc:
+            error_msg = str(exc).lower()
+            if (
+                "api_key_invalid" in error_msg
+                or "unauthorized" in error_msg
+                or "401" in error_msg
+                or "403" in error_msg
+            ):
+                raise LLMProviderAuthError(f"Gemini authentication failed: {exc}") from exc
+            if (
+                "timeout" in error_msg
+                or "connection" in error_msg
+                or "503" in error_msg
+                or "504" in error_msg
+            ):
+                raise LLMTransientNetworkError(f"Gemini network error: {exc}") from exc
+
             raise LLMTransientNetworkError(f"Gemini LLM request failed: {exc}") from exc

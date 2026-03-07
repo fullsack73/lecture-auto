@@ -63,6 +63,9 @@ def format_command_output(result: CommandResult, *, as_json: bool = False) -> st
     if result.command == "transcript refine":
         return _render_transcript_refine(result.payload, result.message)
 
+    if result.command == "summarize":
+        return _render_summarize(result.payload, result.message)
+
     return result.message
 
 
@@ -198,3 +201,25 @@ def _render_transcript_refine(payload: dict[str, Any], message: str) -> str:
         f"- Result: {message}"
     ]
     return "\n".join(lines)
+
+
+def _render_summarize(payload: dict[str, Any], message: str) -> str:
+    preview = bool(payload.get("preview"))
+    if preview:
+        return (
+            "Summary Preview\n"
+            f"- Session ID: {payload['session_id']}\n"
+            f"- Template: {payload.get('template')}\n"
+            f"- Source Transcript: {payload.get('source_transcript')}\n"
+            "- Notes:\n"
+            f"{message}"
+        )
+
+    return (
+        "Summary Saved\n"
+        f"- Session ID: {payload['session_id']}\n"
+        f"- Template: {payload.get('template')}\n"
+        f"- Source Transcript: {payload.get('source_transcript')}\n"
+        f"- Note Path: {payload.get('note_file_path')}\n"
+        "- Next: Re-run summarize with --template to regenerate"
+    )
