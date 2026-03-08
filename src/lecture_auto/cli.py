@@ -19,8 +19,24 @@ capture_app = typer.Typer(help="Capture commands")
 transcription_app = typer.Typer(help="Transcription commands")
 
 
+@app.callback()
+def app_callback(
+    workspace: str | None = typer.Option(
+        None,
+        "--workspace",
+        "-w",
+        help="Custom workspace directory (default: ~/.lecture_auto)",
+        envvar="LECTURE_AUTO_WORKSPACE",
+    ),
+) -> None:
+    if workspace:
+        os.environ["LECTURE_AUTO_WORKSPACE"] = str(Path(workspace).expanduser().resolve())
+
+
 def _build_service() -> SessionService:
-    metadata_file = Path.home() / ".lecture_auto" / "metadata" / "sessions.json"
+    workspace_env = os.environ.get("LECTURE_AUTO_WORKSPACE")
+    base_dir = Path(workspace_env) if workspace_env else Path.home() / ".lecture_auto"
+    metadata_file = base_dir / "metadata" / "sessions.json"
     store = SessionMetadataStore(metadata_file=metadata_file)
 
     llm_adapter = None

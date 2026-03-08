@@ -121,11 +121,9 @@ def test_summarize_uses_custom_template_from_user_directory(
     transcript_path.parent.mkdir(parents=True, exist_ok=True)
     transcript_path.write_text("transcript", encoding="utf-8")
 
-    fake_home = tmp_path / "home"
-    user_template = fake_home / ".lecture_auto" / "templates" / "custom-format.md"
+    user_template = tmp_path / "templates" / "custom-format.md"
     user_template.parent.mkdir(parents=True, exist_ok=True)
     user_template.write_text("# custom-template", encoding="utf-8")
-    monkeypatch.setattr("lecture_auto.session_service.Path.home", lambda: fake_home)
 
     service.summarize_session(session_reference="session-404", template_name="custom-format", preview=True)
 

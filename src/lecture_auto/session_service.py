@@ -1052,7 +1052,7 @@ class SessionService:
             resolved_name = resolved_name[:-3]
 
         preset_dir = Path(__file__).resolve().parent / "templates"
-        user_dir = Path.home() / ".lecture_auto" / "templates"
+        user_dir = self.store.metadata_file.parent.parent / "templates"
         candidates = [
             preset_dir / f"{resolved_name}.md",
             user_dir / f"{resolved_name}.md",
@@ -1065,6 +1065,6 @@ class SessionService:
         raise SessionCommandError(
             code="TEMPLATE_NOT_FOUND",
             message=f"Template '{resolved_name}' was not found.",
-            guidance="Use a preset template or create ~/.lecture_auto/templates/<name>.md.",
+            guidance=f"Use a preset template or create {user_dir}/<name>.md.",
             exit_code=1,
         )
