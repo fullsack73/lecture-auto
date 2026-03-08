@@ -33,14 +33,14 @@ class TestDeepgramAdapter:
         with pytest.raises(STTConfigError, match="Audio path is required"):
             adapter.transcribe(audio_path="   ")
 
-    def test_deepgram_adapter_missing_sdk_raises_config_error(self) -> None:
+    def test_deepgram_adapter_missing_httpx_raises_config_error(self) -> None:
         from lecture_auto.deepgram_adapter import DeepgramSTTRuntimeAdapter
 
         config = STTConfig(mode="api", api_provider="deepgram", api_key="dg-key")
         adapter = DeepgramSTTRuntimeAdapter(config=config)
 
-        with patch.dict("sys.modules", {"deepgram": None}):
-            with pytest.raises(STTConfigError, match="deepgram-sdk is not installed"):
+        with patch.dict("sys.modules", {"httpx": None}):
+            with pytest.raises(STTConfigError, match="httpx is not installed"):
                 adapter.transcribe(audio_path="/tmp/test.wav")
 
     def test_deepgram_adapter_maps_auth_error_to_provider_auth(self) -> None:
@@ -49,20 +49,16 @@ class TestDeepgramAdapter:
         config = STTConfig(mode="api", api_provider="deepgram", api_key="bad-key")
         adapter = DeepgramSTTRuntimeAdapter(config=config)
 
-        mock_deepgram = MagicMock()
-        mock_client_instance = MagicMock()
-        mock_deepgram.DeepgramClient.return_value = mock_client_instance
-        mock_deepgram.PrerecordedOptions = MagicMock
-        mock_deepgram.FileSource = dict
+        mock_response = MagicMock()
+        mock_response.status_code = 401
+        mock_response.text = '{"err_code":"INVALID_AUTH","err_msg":"Invalid credentials."}'
 
-        mock_client_instance.listen.v1.media.transcribe_file.side_effect = Exception(
-            "401 Unauthorized"
-        )
-        mock_client_instance.listen.rest.v.return_value.transcribe_file.side_effect = Exception(
-            "401 Unauthorized"
-        )
+        mock_client = MagicMock()
+        mock_client.__enter__ = MagicMock(return_value=mock_client)
+        mock_client.__exit__ = MagicMock(return_value=False)
+        mock_client.post.return_value = mock_response
 
-        with patch.dict("sys.modules", {"deepgram": mock_deepgram}):
+        with patch("httpx.Client", return_value=mock_client):
             with patch("builtins.open", MagicMock()):
                 with pytest.raises(STTProviderAuthError):
                     adapter.transcribe(audio_path="/tmp/test.wav")

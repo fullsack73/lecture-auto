@@ -2,12 +2,21 @@
 
 A powerful command-line interface for automating the capture, transcription, and summarization of lectures and audio sessions.
 
+## Installation
+
+To use `lecture-auto` from any folder in your terminal, install the package locally:
+```bash
+# From the root folder containing pyproject.toml
+pip install -e .
+```
+
 ## Quick Start
 
-You can invoke the CLI using:
+Once installed, you can invoke the CLI from anywhere using:
 ```bash
-python -m lecture_auto.cli [OPTIONS] COMMAND [ARGS]...
+lecture-auto [OPTIONS] COMMAND [ARGS]...
 ```
+*(Alternatively, you can run `python -m lecture_auto.cli` without installing.)*
 
 To view help for any command or group, append `--help`.
 
@@ -30,20 +39,23 @@ Manage global default settings to avoid passing flags on every command.
 
 - **`config set`**: Set default configuration values.
   ```bash
-  python -m lecture_auto.cli config set [OPTIONS]
+  lecture-auto config set [OPTIONS]
   ```
   - `-w, --workspace`: Default directory to store session metadata, audio, and transcripts.
   - `-stt, --stt-language`: Default language for STT transcription (e.g., `korean`).
   - `-llm, --llm-language`: Default language for generated summaries and notes (e.g., `korean`).
+  - `--stt-api-provider`: Pre-configure your preferred STT provider (e.g., `deepgram`).
+  - `--stt-api-key`: Pre-configure your API key for STT processing.
+  - `--gemini-api-key`: Pre-configure your LLM API key.
 
   *Example:*
   ```bash
-  python -m lecture_auto.cli config set -w ./my_data -stt korean -llm korean
+  lecture-auto config set -w ./my_data -stt korean --stt-api-provider deepgram --stt-api-key "your-key"
   ```
 
 - **`config show`**: Display your current global configurations formatted as JSON.
   ```bash
-  python -m lecture_auto.cli config show
+  lecture-auto config show
   ```
 
 ---
@@ -53,7 +65,7 @@ Sessions group your lecture's audio, metadata, and generated notes.
 
 - **`session create`**: Create a new tracking session before starting a recording.
   ```bash
-  python -m lecture_auto.cli session create --session-id <id> --date <YYYY-MM-DD> [OPTIONS]
+  lecture-auto session create --session-id <id> --date <YYYY-MM-DD> [OPTIONS]
   ```
   - `--session-id` (Required): Unique identifier for the session.
   - `--date` (Required): Session date formatted as `YYYY-MM-DD`.
@@ -63,12 +75,12 @@ Sessions group your lecture's audio, metadata, and generated notes.
 
 - **`session history`**: List recently created sessions.
   ```bash
-  python -m lecture_auto.cli session history [--json]
+  lecture-auto session history [--json]
   ```
 
 - **`session detail`**: View detailed metadata, status, and associated file paths for a single session.
   ```bash
-  python -m lecture_auto.cli session detail <session_id> [--json]
+  lecture-auto session detail <session_id> [--json]
   ```
 
 ---
@@ -78,7 +90,7 @@ Manage the live recording of your system's audio input.
 
 - **`capture start`**: Begin capturing audio for a session.
   ```bash
-  python -m lecture_auto.cli capture start <session_id> [OPTIONS]
+  lecture-auto capture start <session_id> [OPTIONS]
   ```
   - `<session_id>` (Required): The target session ID.
   - `--audio-file-path`: Explicitly define where the recorded file should be saved.
@@ -86,7 +98,7 @@ Manage the live recording of your system's audio input.
 
 - **`capture stop`**: End the active audio recording.
   ```bash
-  python -m lecture_auto.cli capture stop <session_id> [OPTIONS]
+  lecture-auto capture stop <session_id> [OPTIONS]
   ```
   - `<session_id>` (Required): The target session ID.
   - `--failed`: Flag to specify if the recording process was interrupted and mark the capture as failed.
@@ -99,7 +111,7 @@ Transcribe recorded audio into text via Speech-to-Text (STT) models. Local and A
 
 - **`transcription run`**: Run STT transcription on the attached audio for a session.
   ```bash
-  python -m lecture_auto.cli transcription run <session_id> [--json]
+  lecture-auto transcription run <session_id> [--json]
   ```
 
 ---
@@ -109,7 +121,7 @@ Generate polished lecture notes from your transcribed audio using LLMs (e.g., Ge
 
 - **`summarize`**: Summarize the transcript into study notes using a predefined template.
   ```bash
-  python -m lecture_auto.cli summarize [OPTIONS]
+  lecture-auto summarize [OPTIONS]
   ```
   - `--id`: Target session ID.
   - `--template`: Name of the custom template file to use for the notes output structure.

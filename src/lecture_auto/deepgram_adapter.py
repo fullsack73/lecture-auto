@@ -30,56 +30,49 @@ class DeepgramSTTRuntimeAdapter:
         if not audio_path.strip():
             raise STTConfigError("Audio path is required for transcription.")
 
-        DeepgramClient = None
-        sdk_mode = "legacy"
         try:
-            from deepgram import DeepgramClient, PrerecordedOptions, FileSource
+            import httpx
         except ImportError as exc:
-            try:
-                from deepgram import DeepgramClient  # type: ignore[no-redef]
-
-                sdk_mode = "v6"
-            except ImportError:
-                raise STTConfigError(
-                    "deepgram-sdk is not installed. Run: pip install deepgram-sdk"
-                ) from exc
+            raise STTConfigError(
+                "httpx is not installed. Run: pip install httpx"
+            ) from exc
 
         try:
-            try:
-                client = DeepgramClient(api_key=self._api_key)
-            except TypeError:
-                client = DeepgramClient(self._api_key)
-
             with open(audio_path, "rb") as audio_file:
                 buffer_data = audio_file.read()
 
-            if sdk_mode == "legacy":
-                payload: FileSource = {"buffer": buffer_data}
-                options = PrerecordedOptions(
-                    model="nova-2",
-                    smart_format=True,
-                    diarize=self._diarization,
-                )
-                if self._language:
-                    options.language = self._language
-                else:
-                    options.detect_language = True
-
-                response = client.listen.rest.v("1").transcribe_file(payload, options)
+            params: dict[str, str] = {
+                "model": "nova-2",
+                "smart_format": "true",
+            }
+            if self._diarization:
+                params["diarize"] = "true"
+                params["paragraphs"] = "true"
+            if self._language:
+                params["language"] = self._language
             else:
-                request_kwargs = {
-                    "request": buffer_data,
-                    "model": "nova-2",
-                    "smart_format": True,
-                    "diarize": self._diarization,
-                    "paragraphs": True,
-                }
-                if self._language:
-                    request_kwargs["language"] = self._language
-                else:
-                    request_kwargs["detect_language"] = True
+                params["detect_language"] = "true"
 
-                response = client.listen.v1.media.transcribe_file(**request_kwargs)
+            headers = {
+                "Authorization": f"Token {self._api_key}",
+                "Content-Type": "audio/wav",
+            }
+
+            with httpx.Client(timeout=None) as client:
+                raw_response = client.post(
+                    "https://api.deepgram.com/v1/listen",
+                    params=params,
+                    headers=headers,
+                    content=buffer_data,
+                )
+
+            if raw_response.status_code == 401 or raw_response.status_code == 403:
+                raise STTProviderAuthError(
+                    f"Deepgram authentication failed (HTTP {raw_response.status_code}): {raw_response.text}"
+                )
+
+            raw_response.raise_for_status()
+            response = raw_response.json()
 
             transcript_text = ""
             segments: list[DiarizedSegment] = []
@@ -111,14 +104,15 @@ class DeepgramSTTRuntimeAdapter:
 
         except FileNotFoundError as exc:
             raise STTConfigError(f"Audio file not found: {audio_path}") from exc
-
+        except STTProviderAuthError:
+            raise
         except Exception as exc:
             error_msg = str(exc).lower()
             if "401" in error_msg or "unauthorized" in error_msg or "forbidden" in error_msg:
                 raise STTProviderAuthError(
                     f"Deepgram authentication failed: {exc}"
                 ) from exc
-            if "timeout" in error_msg or "connection" in error_msg or "network" in error_msg:
+            if "timeout" in error_msg or "timed out" in error_msg or "connection" in error_msg or "network" in error_msg:
                 raise STTTransientNetworkError(
                     f"Deepgram network error: {exc}"
                 ) from exc

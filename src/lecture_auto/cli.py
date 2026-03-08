@@ -44,6 +44,9 @@ def _build_service() -> SessionService:
     config_workspace = None
     config_stt_language = None
     config_llm_language = None
+    config_stt_api_provider = None
+    config_stt_api_key = None
+    config_gemini_api_key = None
     config_path = _get_global_config_path()
     
     if config_path.exists():
@@ -53,6 +56,9 @@ def _build_service() -> SessionService:
                 config_workspace = config_data.get("workspace")
                 config_stt_language = config_data.get("stt_language")
                 config_llm_language = config_data.get("llm_language")
+                config_stt_api_provider = config_data.get("stt_api_provider")
+                config_stt_api_key = config_data.get("stt_api_key")
+                config_gemini_api_key = config_data.get("gemini_api_key")
         except Exception:
             pass
 
@@ -65,7 +71,7 @@ def _build_service() -> SessionService:
     store = SessionMetadataStore(metadata_file=metadata_file)
 
     llm_adapter = None
-    api_key = os.environ.get("GEMINI_API_KEY")
+    api_key = os.environ.get("GEMINI_API_KEY") or config_gemini_api_key
     if api_key and api_key.strip():
         try:
             llm_adapter = GeminiLLMAdapter(
@@ -80,8 +86,8 @@ def _build_service() -> SessionService:
 
     stt_config = STTConfig(
         mode=os.environ.get("STT_MODE", "api"),
-        api_provider=os.environ.get("STT_API_PROVIDER", "openai-compatible"),
-        api_key=os.environ.get("STT_API_KEY"),
+        api_provider=os.environ.get("STT_API_PROVIDER") or config_stt_api_provider or "openai-compatible",
+        api_key=os.environ.get("STT_API_KEY") or config_stt_api_key,
         local_model_name=os.environ.get("STT_LOCAL_MODEL", "base"),
         language=config_stt_language,
     )
@@ -211,6 +217,9 @@ def config_set(
     workspace: str | None = typer.Option(None, "--workspace", "-w", help="Default workspace directory"),
     stt_language: str | None = typer.Option(None, "--stt-language", "-stt", help="Default language for STT transcription (e.g. korean)"),
     llm_language: str | None = typer.Option(None, "--llm-language", "-llm", help="Default language for summaries and generated notes (e.g. korean)"),
+    stt_api_provider: str | None = typer.Option(None, "--stt-api-provider", help="STT API provider (e.g. deepgram)"),
+    stt_api_key: str | None = typer.Option(None, "--stt-api-key", help="STT API key"),
+    gemini_api_key: str | None = typer.Option(None, "--gemini-api-key", help="Gemini API key for LLM"),
 ) -> None:
     config_path = _get_global_config_path()
     config_data = {}
@@ -235,6 +244,21 @@ def config_set(
     if llm_language is not None:
         config_data["llm_language"] = llm_language
         typer.echo(f"Global LLM language set to: {config_data['llm_language']}")
+        updated = True
+
+    if stt_api_provider is not None:
+        config_data["stt_api_provider"] = stt_api_provider
+        typer.echo(f"Global STT API provider set to: {config_data['stt_api_provider']}")
+        updated = True
+
+    if stt_api_key is not None:
+        config_data["stt_api_key"] = stt_api_key
+        typer.echo(f"Global STT API key configured.")
+        updated = True
+
+    if gemini_api_key is not None:
+        config_data["gemini_api_key"] = gemini_api_key
+        typer.echo(f"Global Gemini API key configured.")
         updated = True
 
     if not updated:

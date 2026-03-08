@@ -93,19 +93,12 @@ def test_deepgram_adapter_network_error_maps_to_transient() -> None:
     config = STTConfig(mode="api", api_provider="deepgram", api_key="dg-key")
     adapter = DeepgramSTTRuntimeAdapter(config=config)
 
-    mock_deepgram = MagicMock()
     mock_client = MagicMock()
-    mock_deepgram.DeepgramClient.return_value = mock_client
-    mock_deepgram.PrerecordedOptions = MagicMock
-    mock_deepgram.FileSource = dict
-    mock_client.listen.v1.media.transcribe_file.side_effect = Exception(
-        "Connection timeout error"
-    )
-    mock_client.listen.rest.v.return_value.transcribe_file.side_effect = Exception(
-        "Connection timeout error"
-    )
+    mock_client.__enter__ = MagicMock(return_value=mock_client)
+    mock_client.__exit__ = MagicMock(return_value=False)
+    mock_client.post.side_effect = Exception("Connection timeout error")
 
-    with patch.dict("sys.modules", {"deepgram": mock_deepgram}):
+    with patch("httpx.Client", return_value=mock_client):
         with patch("builtins.open", MagicMock()):
             with pytest.raises(STTTransientNetworkError):
                 adapter.transcribe(audio_path="/tmp/test.wav")

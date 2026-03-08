@@ -9,6 +9,7 @@ requires-python = ">=3.11"
 dependencies = [
 	"google-genai>=1.0.0",
 	"typer>=0.12,<1.0",
+	"deepgram-sdk>=3.0.0",
 ]
 
 [project.scripts]
