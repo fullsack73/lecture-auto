@@ -155,39 +155,18 @@ class GeminiLLMAdapter:
             "Do not invent facts not present in the transcript."
         )
 
-        chunk_size = self.config.chunk_size
-        note_chunks: list[str] = []
-        start_idx = 0
-
         try:
-            while start_idx < len(transcript):
-                end_idx = min(start_idx + chunk_size, len(transcript))
-
-                if end_idx < len(transcript):
-                    last_space = transcript.rfind(" ", start_idx, end_idx)
-                    if last_space > start_idx + chunk_size // 2:
-                        end_idx = last_space
-
-                chunk = transcript[start_idx:end_idx]
-                prompt = (
-                    f"{system_instructions}\n\n"
-                    f"Template:\n{template}\n\n"
-                    f"Transcript chunk:\n{chunk}\n"
-                )
-                response = self.client.models.generate_content(
-                    model=self._normalize_model_name(self.config.model_name),
-                    contents=prompt,
-                )
-                text = (getattr(response, "text", "") or "").strip()
-                note_chunks.append(text)
-
-                start_idx = (
-                    end_idx + 1
-                    if end_idx < len(transcript) and transcript[end_idx] == " "
-                    else end_idx
-                )
-
-            return "\n\n".join(note_chunks)
+            prompt = (
+                f"{system_instructions}\n\n"
+                f"Template:\n{template}\n\n"
+                f"Transcript:\n{transcript}\n"
+            )
+            response = self.client.models.generate_content(
+                model=self._normalize_model_name(self.config.model_name),
+                contents=prompt,
+            )
+            text = (getattr(response, "text", "") or "").strip()
+            return text
 
         except PermissionDenied as exc:
             raise LLMProviderAuthError(f"Gemini authentication failed: {exc}") from exc
