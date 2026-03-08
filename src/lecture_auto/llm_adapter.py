@@ -77,10 +77,12 @@ class GeminiLLMAdapter:
             DeadlineExceeded = Exception
 
         topic_prompt = f"The overall topic or subject is '{context_topic}'. " if context_topic else ""
+        lang_prompt = f"Output your response entirely in {self.config.language}. " if self.config.language else ""
         system_instructions = (
             f"You are a helpful assistant that refines lecture transcripts. {topic_prompt}"
             "Your task is to improve the provided transcript chunk by fixing typos, spacing, punctuation, "
             "and awkward wording. You must preserve the original lecture meaning and terminology entirely. "
+            f"{lang_prompt}"
             "Only output the refined text, without any conversational padding."
         )
 
@@ -144,10 +146,12 @@ class GeminiLLMAdapter:
             DeadlineExceeded = Exception
 
         topic_prompt = f"The lecture topic is '{context_topic}'. " if context_topic else ""
+        lang_prompt = f"Output your response entirely in {self.config.language}. " if self.config.language else ""
         system_instructions = (
             f"You are a helpful assistant that generates lecture notes. {topic_prompt}"
             "Use the provided markdown template exactly as the output structure. "
             "Fill each section with concise, accurate lecture notes from the transcript. "
+            f"{lang_prompt}"
             "Do not invent facts not present in the transcript."
         )
 

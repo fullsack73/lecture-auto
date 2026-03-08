@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 
@@ -17,6 +18,11 @@ app = typer.Typer(help="Lecture automation CLI")
 session_app = typer.Typer(help="Session commands")
 capture_app = typer.Typer(help="Capture commands")
 transcription_app = typer.Typer(help="Transcription commands")
+config_app = typer.Typer(help="Configuration commands")
+
+
+def _get_global_config_path() -> Path:
+    return Path.home() / ".lecture_auto" / "config.json"
 
 
 @app.callback()
@@ -35,7 +41,26 @@ def app_callback(
 
 def _build_service() -> SessionService:
     workspace_env = os.environ.get("LECTURE_AUTO_WORKSPACE")
-    base_dir = Path(workspace_env) if workspace_env else Path.home() / ".lecture_auto"
+    config_workspace = None
+    config_stt_language = None
+    config_llm_language = None
+    config_path = _get_global_config_path()
+    
+    if config_path.exists():
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                config_data = json.load(f)
+                config_workspace = config_data.get("workspace")
+                config_stt_language = config_data.get("stt_language")
+                config_llm_language = config_data.get("llm_language")
+        except Exception:
+            pass
+
+    resolved_workspace = workspace_env or config_workspace
+    if not workspace_env and resolved_workspace:
+        os.environ["LECTURE_AUTO_WORKSPACE"] = resolved_workspace
+        
+    base_dir = Path(resolved_workspace) if resolved_workspace else Path.home() / ".lecture_auto"
     metadata_file = base_dir / "metadata" / "sessions.json"
     store = SessionMetadataStore(metadata_file=metadata_file)
 
@@ -47,6 +72,7 @@ def _build_service() -> SessionService:
                 LLMConfig(
                     api_key=api_key,
                     model_name=os.environ.get("LLM_MODEL", "gemini-3-flash-preview"),
+                    language=config_llm_language,
                 )
             )
         except LLMConfigError:
@@ -57,6 +83,7 @@ def _build_service() -> SessionService:
         api_provider=os.environ.get("STT_API_PROVIDER", "openai-compatible"),
         api_key=os.environ.get("STT_API_KEY"),
         local_model_name=os.environ.get("STT_LOCAL_MODEL", "base"),
+        language=config_stt_language,
     )
 
     return SessionService(
@@ -179,9 +206,64 @@ def summarize(
     )
 
 
+@config_app.command("set")
+def config_set(
+    workspace: str | None = typer.Option(None, "--workspace", "-w", help="Default workspace directory"),
+    stt_language: str | None = typer.Option(None, "--stt-language", "-stt", help="Default language for STT transcription (e.g. korean)"),
+    llm_language: str | None = typer.Option(None, "--llm-language", "-llm", help="Default language for summaries and generated notes (e.g. korean)"),
+) -> None:
+    config_path = _get_global_config_path()
+    config_data = {}
+    if config_path.exists():
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                config_data = json.load(f)
+        except Exception:
+            pass
+    
+    updated = False
+    if workspace is not None:
+        config_data["workspace"] = str(Path(workspace).expanduser().resolve())
+        typer.echo(f"Global workspace set to: {config_data['workspace']}")
+        updated = True
+        
+    if stt_language is not None:
+        config_data["stt_language"] = stt_language
+        typer.echo(f"Global STT language set to: {config_data['stt_language']}")
+        updated = True
+
+    if llm_language is not None:
+        config_data["llm_language"] = llm_language
+        typer.echo(f"Global LLM language set to: {config_data['llm_language']}")
+        updated = True
+
+    if not updated:
+        typer.echo("No configuration options provided to set.")
+        return
+
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(config_path, "w", encoding="utf-8") as f:
+        json.dump(config_data, f, indent=2)
+
+
+@config_app.command("show")
+def config_show() -> None:
+    config_path = _get_global_config_path()
+    if config_path.exists():
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                config_data = json.load(f)
+            typer.echo(json.dumps(config_data, indent=2))
+        except Exception as e:
+            typer.echo(f"Error reading config: {e}")
+    else:
+        typer.echo("No global configuration found.")
+
+
 app.add_typer(session_app, name="session")
 app.add_typer(capture_app, name="capture")
 app.add_typer(transcription_app, name="transcription")
+app.add_typer(config_app, name="config")
 
 
 def main() -> None:

@@ -10,6 +10,7 @@ class LLMConfig:
     api_key: str | None = None
     model_name: str = "gemini-3-flash-preview"
     chunk_size: int = 4000  # Number of characters per chunk for long transcripts
+    language: str | None = None
 
     def validate(self) -> None:
         if not self.api_key or not self.api_key.strip():
