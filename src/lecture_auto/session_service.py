@@ -41,8 +41,8 @@ ALLOWED_TRANSITIONS = {
     "idle": {"recording"},
     "recording": {"stopping", "failed"},
     "stopping": {"completed", "failed"},
-    "completed": set(),
-    "failed": set(),
+    "completed": {"recording"},
+    "failed": {"recording"},
 }
 
 SUPPORTED_IMPORT_EXTENSIONS = {"wav", "mp3"}

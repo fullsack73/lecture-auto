@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any
 
 from lecture_auto.stt_config import STTConfig
@@ -53,12 +54,22 @@ class DeepgramSTTRuntimeAdapter:
             else:
                 params["detect_language"] = "true"
 
+            ext = os.path.splitext(audio_path)[1].lower()
+            content_type_map = {
+                ".wav": "audio/wav",
+                ".mp3": "audio/mpeg",
+                ".m4a": "audio/mp4",
+                ".flac": "audio/flac",
+                ".ogg": "audio/ogg",
+            }
+            content_type = content_type_map.get(ext, "audio/wav")
+
             headers = {
                 "Authorization": f"Token {self._api_key}",
-                "Content-Type": "audio/wav",
+                "Content-Type": content_type,
             }
 
-            with httpx.Client(timeout=None) as client:
+            with httpx.Client(timeout=300.0) as client:
                 raw_response = client.post(
                     "https://api.deepgram.com/v1/listen",
                     params=params,

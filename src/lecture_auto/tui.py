@@ -303,17 +303,21 @@ def _menu_config() -> None:
 
             fields = [
                 ("workspace", "Workspace directory (leave blank to skip)"),
-                ("stt_language", "STT language (e.g. korean, leave blank to skip)"),
+                ("stt_language", "STT language (e.g. ko, leave blank to skip)"),
                 ("llm_language", "LLM language (e.g. korean, leave blank to skip)"),
                 ("stt_api_provider", "STT API provider (e.g. deepgram, leave blank to skip)"),
                 ("stt_api_key", "STT API key (leave blank to skip)"),
                 ("gemini_api_key", "Gemini API key (leave blank to skip)"),
+                ("audio_format", "Audio format (wav or mp3, leave blank to skip)"),
             ]
             for key, prompt in fields:
                 value = _ask(prompt, default=data.get(key, ""))
                 if value is None:  # Ctrl+C
                     break
                 if value.strip():
+                    if key == "audio_format" and value.strip() not in ("wav", "mp3"):
+                        typer.echo("Invalid audio format. Must be 'wav' or 'mp3'. Skipping.")
+                        continue
                     data[key] = value.strip() if key != "workspace" else str(
                         Path(value.strip()).expanduser().resolve()
                     )
