@@ -14,7 +14,7 @@ from lecture_auto.session_metadata_store import SessionMetadataStore
 from lecture_auto.session_service import SessionCommandError, SessionService
 from lecture_auto.stt_config import STTConfig
 
-app = typer.Typer(help="Lecture automation CLI")
+app = typer.Typer(help="Lecture automation CLI", invoke_without_command=True)
 session_app = typer.Typer(help="Session commands")
 capture_app = typer.Typer(help="Capture commands")
 transcription_app = typer.Typer(help="Transcription commands")
@@ -27,6 +27,7 @@ def _get_global_config_path() -> Path:
 
 @app.callback()
 def app_callback(
+    ctx: typer.Context,
     workspace: str | None = typer.Option(
         None,
         "--workspace",
@@ -37,6 +38,14 @@ def app_callback(
 ) -> None:
     if workspace:
         os.environ["LECTURE_AUTO_WORKSPACE"] = str(Path(workspace).expanduser().resolve())
+    if ctx.invoked_subcommand is None:
+        from lecture_auto.tui import run_tui
+        service = _build_service()
+        try:
+            run_tui(service)
+        except (KeyboardInterrupt, EOFError):
+            typer.echo("\nBye! 👋")
+        raise typer.Exit()
 
 
 def _build_service() -> SessionService:
