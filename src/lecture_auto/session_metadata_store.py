@@ -71,6 +71,15 @@ class SessionMetadataStore:
         self._safe_write(updated)
         return normalized
 
+    def delete(self, session_id: str) -> bool:
+        current = self.load_all()
+        filtered = [row for row in current if row["session_id"] != session_id]
+        if len(filtered) == len(current):
+            return False
+
+        self._safe_write(filtered)
+        return True
+
     def list_recent_first(self) -> list[dict[str, Any]]:
         sessions = self.load_all()
         return sorted(sessions, key=lambda row: row["date"], reverse=True)

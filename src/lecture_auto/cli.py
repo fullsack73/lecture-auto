@@ -156,6 +156,15 @@ def session_detail(
     _run_or_exit("session detail", as_json, lambda: service.session_detail(session_id=session_id))
 
 
+@session_app.command("delete")
+def session_delete_cmd(
+    session_id: str = typer.Argument(..., help="Session id to delete"),
+    as_json: bool = typer.Option(False, "--json", help="Render output as JSON"),
+) -> None:
+    service = _build_service()
+    _run_or_exit("session delete", as_json, lambda: service.session_delete(session_id=session_id))
+
+
 @capture_app.command("start")
 def capture_start(
     session_id: str = typer.Argument(..., help="Session id"),

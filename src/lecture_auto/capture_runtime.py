@@ -111,6 +111,7 @@ class FFmpegCaptureRuntimeAdapter:
         try:
             process = subprocess.Popen(
                 command,
+                stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             )

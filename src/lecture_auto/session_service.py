@@ -235,6 +235,42 @@ class SessionService:
             message=f"Loaded details for session '{session_id}'.",
         )
 
+    def session_delete(self, session_id: str) -> CommandResult:
+        session = self._require_session(session_id)
+        
+        metadata_root = self.store.metadata_file.parent.parent
+        files_to_delete = []
+        if session.get("audio_file_path"):
+            files_to_delete.append(metadata_root / session["audio_file_path"])
+        if session.get("transcript_file_path"):
+            files_to_delete.append(metadata_root / session["transcript_file_path"])
+        
+        edited_transcript = metadata_root / f"transcripts/{session_id}-edited.md"
+        if edited_transcript.exists():
+            files_to_delete.append(edited_transcript)
+            
+        deleted = self.store.delete(session_id)
+        if not deleted:
+            raise SessionCommandError(
+                code="SESSION_DELETE_FAILED",
+                message=f"Session '{session_id}' could not be deleted.",
+                guidance="It might have been removed already.",
+                exit_code=1,
+            )
+            
+        for f in files_to_delete:
+            try:
+                if f.exists():
+                    f.unlink()
+            except OSError:
+                pass
+                
+        return CommandResult(
+            command="session delete",
+            payload={"session_id": session_id},
+            message=f"Session '{session_id}' and associated files have been deleted.",
+        )
+
     def import_audio(
         self,
         session_id: str,

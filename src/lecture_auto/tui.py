@@ -115,6 +115,7 @@ def _menu_session(service) -> None:
                 questionary.Choice("✚  Create new session", "create"),
                 questionary.Choice("📋  View history", "history"),
                 questionary.Choice("🔍  View session detail", "detail"),
+                questionary.Choice("🗑  Delete session", "delete"),
                 SEPARATOR,
                 questionary.Choice("← Back", "__back__"),
             ],
@@ -139,6 +140,22 @@ def _menu_session(service) -> None:
                 _echo_result(result)
             except SessionCommandError as exc:
                 _echo_error("session detail", exc)
+
+        elif choice == "delete":
+            session_id = _select_session(service, "Select session to delete")
+            if session_id is None:
+                continue
+            
+            confirm = questionary.confirm(f"Are you sure you want to delete session '{session_id}'? This cannot be undone.", style=STYLE).ask()
+            if not confirm:
+                typer.echo("Deletion cancelled.")
+                continue
+
+            try:
+                result = service.session_delete(session_id=session_id)
+                _echo_result(result)
+            except SessionCommandError as exc:
+                _echo_error("session delete", exc)
 
         elif choice == "create":
             session_id = _ask("Session ID (e.g. cs101-2026-03-09)")
