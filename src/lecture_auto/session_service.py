@@ -95,6 +95,7 @@ class SessionService:
         local_stt_adapter: STTRuntimeAdapter | None = None,
         api_stt_adapter: STTRuntimeAdapter | None = None,
         llm_adapter: LLMProviderAdapter | None = None,
+        audio_format: str = "wav",
     ) -> None:
         self.store = store
         self.runtime_adapter = runtime_adapter or NoopCaptureRuntimeAdapter()
@@ -102,6 +103,7 @@ class SessionService:
         self._local_stt_adapter = local_stt_adapter
         self._api_stt_adapter = api_stt_adapter
         self.llm_adapter = llm_adapter
+        self.audio_format = audio_format
 
     def session_create(
         self,
@@ -132,7 +134,9 @@ class SessionService:
     def capture_start(self, session_id: str, audio_file_path: str | None = None) -> CommandResult:
         session = self._require_session(session_id)
         self._transition_or_raise(session, target_state="recording")
-        resolved_audio_path = audio_file_path or self.store.build_recording_path(session_id)
+        resolved_audio_path = audio_file_path or self.store.build_recording_path(
+            session_id, extension=self.audio_format
+        )
         metadata_root = self.store.metadata_file.parent.parent
         runtime_output_path = resolved_audio_path
         if not Path(resolved_audio_path).is_absolute():

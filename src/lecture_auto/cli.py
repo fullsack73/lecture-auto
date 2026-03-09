@@ -56,6 +56,7 @@ def _build_service() -> SessionService:
     config_stt_api_provider = None
     config_stt_api_key = None
     config_gemini_api_key = None
+    config_audio_format = None
     config_path = _get_global_config_path()
     
     if config_path.exists():
@@ -68,6 +69,7 @@ def _build_service() -> SessionService:
                 config_stt_api_provider = config_data.get("stt_api_provider")
                 config_stt_api_key = config_data.get("stt_api_key")
                 config_gemini_api_key = config_data.get("gemini_api_key")
+                config_audio_format = config_data.get("audio_format")
         except Exception:
             pass
 
@@ -106,6 +108,7 @@ def _build_service() -> SessionService:
         runtime_adapter=FFmpegCaptureRuntimeAdapter(),
         stt_config=stt_config,
         llm_adapter=llm_adapter,
+        audio_format=os.environ.get("LECTURE_AUTO_AUDIO_FORMAT") or config_audio_format or "wav",
     )
 
 
@@ -238,6 +241,7 @@ def config_set(
     stt_api_provider: str | None = typer.Option(None, "--stt-api-provider", help="STT API provider (e.g. deepgram)"),
     stt_api_key: str | None = typer.Option(None, "--stt-api-key", help="STT API key"),
     gemini_api_key: str | None = typer.Option(None, "--gemini-api-key", help="Gemini API key for LLM"),
+    audio_format: str | None = typer.Option(None, "--audio-format", help="Default audio format for recordings (wav or mp3)"),
 ) -> None:
     config_path = _get_global_config_path()
     config_data = {}
@@ -277,6 +281,14 @@ def config_set(
     if gemini_api_key is not None:
         config_data["gemini_api_key"] = gemini_api_key
         typer.echo(f"Global Gemini API key configured.")
+        updated = True
+
+    if audio_format is not None:
+        if audio_format not in ("wav", "mp3"):
+            typer.echo("Audio format must be 'wav' or 'mp3'.", err=True)
+            raise typer.Exit(code=1)
+        config_data["audio_format"] = audio_format
+        typer.echo(f"Global audio format set to: {config_data['audio_format']}")
         updated = True
 
     if not updated:
