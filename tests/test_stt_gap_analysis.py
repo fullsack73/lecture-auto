@@ -90,7 +90,7 @@ def test_deepgram_adapter_network_error_maps_to_transient() -> None:
     from lecture_auto.deepgram_adapter import DeepgramSTTRuntimeAdapter
     from unittest.mock import MagicMock
 
-    config = STTConfig(mode="api", api_provider="deepgram", api_key="dg-key")
+    config = STTConfig(mode="api", api_provider="deepgram", api_key="dg-key", language="en")
     adapter = DeepgramSTTRuntimeAdapter(config=config)
 
     mock_client = MagicMock()
@@ -106,7 +106,7 @@ def test_deepgram_adapter_network_error_maps_to_transient() -> None:
 
 def test_service_builds_deepgram_adapter_when_provider_is_deepgram(tmp_path: Path) -> None:
     """SessionService dispatches to DeepgramSTTRuntimeAdapter when provider == deepgram."""
-    config = STTConfig(mode="api", api_provider="deepgram", api_key="test-key")
+    config = STTConfig(mode="api", api_provider="deepgram", api_key="test-key", language="en")
     service = _service(tmp_path, config=config)
 
     with patch("lecture_auto.deepgram_adapter.DeepgramSTTRuntimeAdapter") as MockAdapter:

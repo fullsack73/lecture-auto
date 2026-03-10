@@ -21,14 +21,14 @@ class TestDeepgramAdapter:
     def test_deepgram_adapter_rejects_empty_api_key(self) -> None:
         from lecture_auto.deepgram_adapter import DeepgramSTTRuntimeAdapter
 
-        config = STTConfig(mode="api", api_provider="deepgram", api_key="")
+        config = STTConfig(mode="api", api_provider="deepgram", api_key="", language="en")
         with pytest.raises(STTConfigError, match="API key is required"):
             DeepgramSTTRuntimeAdapter(config=config)
 
     def test_deepgram_adapter_rejects_empty_audio_path(self) -> None:
         from lecture_auto.deepgram_adapter import DeepgramSTTRuntimeAdapter
 
-        config = STTConfig(mode="api", api_provider="deepgram", api_key="dg-key")
+        config = STTConfig(mode="api", api_provider="deepgram", api_key="dg-key", language="en")
         adapter = DeepgramSTTRuntimeAdapter(config=config)
         with pytest.raises(STTConfigError, match="Audio path is required"):
             adapter.transcribe(audio_path="   ")
@@ -36,7 +36,7 @@ class TestDeepgramAdapter:
     def test_deepgram_adapter_missing_httpx_raises_config_error(self) -> None:
         from lecture_auto.deepgram_adapter import DeepgramSTTRuntimeAdapter
 
-        config = STTConfig(mode="api", api_provider="deepgram", api_key="dg-key")
+        config = STTConfig(mode="api", api_provider="deepgram", api_key="dg-key", language="en")
         adapter = DeepgramSTTRuntimeAdapter(config=config)
 
         with patch.dict("sys.modules", {"httpx": None}):
@@ -46,7 +46,7 @@ class TestDeepgramAdapter:
     def test_deepgram_adapter_maps_auth_error_to_provider_auth(self) -> None:
         from lecture_auto.deepgram_adapter import DeepgramSTTRuntimeAdapter
 
-        config = STTConfig(mode="api", api_provider="deepgram", api_key="bad-key")
+        config = STTConfig(mode="api", api_provider="deepgram", api_key="bad-key", language="en")
         adapter = DeepgramSTTRuntimeAdapter(config=config)
 
         mock_response = MagicMock()
@@ -66,7 +66,7 @@ class TestDeepgramAdapter:
     def test_deepgram_adapter_uses_mp3_content_type(self) -> None:
         from lecture_auto.deepgram_adapter import DeepgramSTTRuntimeAdapter
 
-        config = STTConfig(mode="api", api_provider="deepgram", api_key="dg-key")
+        config = STTConfig(mode="api", api_provider="deepgram", api_key="dg-key", language="en")
         adapter = DeepgramSTTRuntimeAdapter(config=config)
 
         mock_response = MagicMock()
@@ -101,7 +101,7 @@ class TestDeepgramAdapter:
         from lecture_auto.deepgram_adapter import DeepgramSTTRuntimeAdapter
         import httpx
 
-        config = STTConfig(mode="api", api_provider="deepgram", api_key="dg-key")
+        config = STTConfig(mode="api", api_provider="deepgram", api_key="dg-key", language="en")
         adapter = DeepgramSTTRuntimeAdapter(config=config)
 
         mock_client = MagicMock()

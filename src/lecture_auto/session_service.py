@@ -1085,6 +1085,19 @@ class SessionService:
 
         return target_path.read_text(encoding="utf-8"), source_name
 
+    def list_note_templates(self) -> list[str]:
+        """List available summary note templates."""
+        preset_dir = Path(__file__).resolve().parent / "templates"
+        user_dir = self.store.metadata_file.parent.parent / "templates"
+        
+        templates = set()
+        for directory in (preset_dir, user_dir):
+            if directory.exists() and directory.is_dir():
+                for p in directory.glob("*.md"):
+                    templates.add(p.stem)
+                    
+        return sorted(list(templates))
+
     def _resolve_note_template(self, template_name: str | None) -> tuple[str, str]:
         resolved_name = (template_name or DEFAULT_NOTE_TEMPLATE_NAME).strip()
         if not resolved_name:

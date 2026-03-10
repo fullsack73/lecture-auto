@@ -263,7 +263,26 @@ def _menu_summarize(service) -> None:
     if session_id is None:
         return
 
-    template = _ask("Template name (leave blank for default)")
+    try:
+        templates = service.list_note_templates()
+    except Exception as exc:
+        _echo_error("summarize", exc)
+        return
+
+    choices = [questionary.Choice(title=t, value=t) for t in templates]
+    if choices:
+        choices.append(questionary.Separator())
+    choices.append(questionary.Choice(title="✎  Enter manually...", value="__manual__"))
+
+    template_choice = _select("Template", choices)
+    if template_choice is None:
+        return
+
+    if template_choice == "__manual__":
+        template = _ask("Template name (leave blank for default)")
+    else:
+        template = template_choice
+
     preview_choice = _select(
         "Save or preview?",
         [
@@ -314,31 +333,58 @@ def _menu_config() -> None:
             updated = False
 
             fields = [
-                ("workspace", "Workspace directory (leave blank to skip)"),
-                ("stt_language", "STT language (e.g. ko, leave blank to skip)"),
-                ("llm_language", "LLM language (e.g. korean, leave blank to skip)"),
-                ("stt_api_provider", "STT API provider (e.g. deepgram, leave blank to skip)"),
-                ("stt_api_key", "STT API key (leave blank to skip)"),
-                ("gemini_api_key", "Gemini API key (leave blank to skip)"),
-                ("audio_format", "Audio format (wav or mp3, leave blank to skip)"),
+                ("workspace", "Workspace directory"),
+                ("stt_language", "STT language (e.g. ko)"),
+                ("llm_language", "LLM language (e.g. korean)"),
+                ("stt_api_provider", "STT API provider (e.g. deepgram)"),
+                ("stt_api_key", "STT API key"),
+                ("gemini_api_key", "Gemini API key"),
+                ("audio_format", "Audio format (wav or mp3)"),
             ]
-            for key, prompt in fields:
-                value = _ask(prompt, default=data.get(key, ""))
+            
+            while True:
+                choices = []
+                for key, label in fields:
+                    current = data.get(key, "")
+                    display = f"[{current}] {label}" if current else f"[ ] {label}"
+                    choices.append(questionary.Choice(title=display, value=key))
+                choices.append(SEPARATOR)
+                choices.append(questionary.Choice(title="💾  Save changes", value="__save__"))
+                choices.append(questionary.Choice(title="✖  Cancel", value="__cancel__"))
+                
+                selected_key = _select("Select a field to edit or save", choices)
+                
+                if selected_key in (None, "__cancel__"):
+                    typer.echo("Config changes cancelled.")
+                    updated = False
+                    break
+                    
+                if selected_key == "__save__":
+                    break
+                
+                prompt = next(label for k, label in fields if k == selected_key)
+                value = _ask(f"New value for {prompt} (leave blank to skip/clear)", default=data.get(selected_key, ""))
+                
                 if value is None:  # Ctrl+C
                     break
-                if value.strip():
-                    if key == "audio_format" and value.strip() not in ("wav", "mp3"):
+                    
+                value = value.strip()
+                if value:
+                    if selected_key == "audio_format" and value not in ("wav", "mp3"):
                         typer.echo("Invalid audio format. Must be 'wav' or 'mp3'. Skipping.")
                         continue
-                    data[key] = value.strip() if key != "workspace" else str(
-                        Path(value.strip()).expanduser().resolve()
-                    )
+                    if selected_key == "workspace":
+                        value = str(Path(value).expanduser().resolve())
+                    data[selected_key] = value
+                    updated = True
+                elif selected_key in data:
+                    del data[selected_key]
                     updated = True
 
             if updated:
                 _save_config(data)
                 typer.echo("✓ Config saved.")
-            else:
+            elif selected_key == "__save__":
                 typer.echo("No changes made.")
 
         typer.echo()
