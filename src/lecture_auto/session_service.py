@@ -840,9 +840,10 @@ class SessionService:
         raw_transcript_path = metadata_root / raw_transcript_path_str
         edited_transcript_path = metadata_root / f"transcripts/{session_id}-edited.md"
 
-        target_path = raw_transcript_path if raw else (
-            edited_transcript_path if edited_transcript_path.exists() else raw_transcript_path
-        )
+        target_path = raw_transcript_path
+        if not raw and edited_transcript_path.exists():
+            if not raw_transcript_path.exists() or edited_transcript_path.stat().st_mtime > raw_transcript_path.stat().st_mtime:
+                target_path = edited_transcript_path
 
         if not target_path.exists():
             raise SessionCommandError(

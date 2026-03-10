@@ -111,3 +111,23 @@ def test_refine_cli_formatting() -> None:
     assert "- Session ID: test-session-99" in output
     assert "- Source Target: edited" in output
     assert "- Result: Transcript successfully refined from edited source." in output
+
+def test_refine_uses_raw_when_raw_is_newer(service: SessionService) -> None:
+    transcripts_dir = service.store.metadata_file.parent.parent / "transcripts"
+    edited_path = transcripts_dir / "test-session-1-edited.md"
+    edited_path.write_text("This is an existing edited transcript.")
+    
+    # Overwrite raw to be newer than edited
+    import time
+    time.sleep(0.01)
+    raw_path = transcripts_dir / "test-session-1-raw.md"
+    raw_path.write_text("This is the new raw transcript that is newer.")
+
+    result = service.transcript_refine("test-session-1")
+    
+    assert result.payload["target_used"] == "raw"
+    service.llm_adapter.refine_transcript.assert_called_once_with(
+        "This is the new raw transcript that is newer.",
+        context_topic="Introduction to AI"
+    )
+    assert edited_path.read_text() == "Refined Mock Output"
