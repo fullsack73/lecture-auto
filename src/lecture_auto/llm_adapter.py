@@ -72,9 +72,11 @@ class GeminiLLMAdapter:
 
         try:
             from google.api_core.exceptions import PermissionDenied, DeadlineExceeded
+            from google.genai import types
         except ImportError:
             PermissionDenied = Exception
             DeadlineExceeded = Exception
+            types = None
 
         topic_prompt = f"The overall topic or subject is '{context_topic}'. " if context_topic else ""
         lang_prompt = f"Output your response entirely in {self.config.language}. " if self.config.language else ""
@@ -101,11 +103,16 @@ class GeminiLLMAdapter:
                 
                 chunk = raw_text[start_idx:end_idx]
                 
-                prompt = f"{system_instructions}\n\nRefine the following text:\n{chunk}"
+                prompt = f"Refine the following text:\n{chunk}"
+
+                config = types.GenerateContentConfig(
+                    system_instruction=system_instructions,
+                ) if types else None
 
                 response = self.client.models.generate_content(
                     model=self._normalize_model_name(self.config.model_name),
                     contents=prompt,
+                    config=config,
                 )
                 text = (getattr(response, "text", "") or "").strip()
                 refined_chunks.append(text)
@@ -141,9 +148,11 @@ class GeminiLLMAdapter:
 
         try:
             from google.api_core.exceptions import PermissionDenied, DeadlineExceeded
+            from google.genai import types
         except ImportError:
             PermissionDenied = Exception
             DeadlineExceeded = Exception
+            types = None
 
         topic_prompt = f"The lecture topic is '{context_topic}'. " if context_topic else ""
         lang_prompt = f"Output your response entirely in {self.config.language}. " if self.config.language else ""
@@ -157,13 +166,18 @@ class GeminiLLMAdapter:
 
         try:
             prompt = (
-                f"{system_instructions}\n\n"
                 f"Template:\n{template}\n\n"
                 f"Transcript:\n{transcript}\n"
             )
+            
+            config = types.GenerateContentConfig(
+                system_instruction=system_instructions,
+            ) if types else None
+
             response = self.client.models.generate_content(
                 model=self._normalize_model_name(self.config.model_name),
                 contents=prompt,
+                config=config,
             )
             text = (getattr(response, "text", "") or "").strip()
             return text
