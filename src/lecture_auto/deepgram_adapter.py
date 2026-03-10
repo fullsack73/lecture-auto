@@ -43,21 +43,23 @@ class DeepgramSTTRuntimeAdapter:
                 buffer_data = audio_file.read()
 
             params: dict[str, str] = {
-                "model": "nova-2",
+                "model": "nova-3",
                 "smart_format": "true",
             }
             if self._diarization:
                 params["diarize"] = "true"
                 params["paragraphs"] = "true"
-            if self._language:
-                params["language"] = self._language
-            else:
-                params["detect_language"] = "true"
+            if not self._language:
+                raise STTConfigError(
+                    "Language must be specified in STT config for Deepgram "
+                    "(e.g. 'ko', 'en', 'ja')."
+                )
+            params["language"] = self._language
 
             ext = os.path.splitext(audio_path)[1].lower()
             content_type_map = {
                 ".wav": "audio/wav",
-                ".mp3": "audio/mpeg",
+                ".mp3": "audio/mp3",
                 ".m4a": "audio/mp4",
                 ".flac": "audio/flac",
                 ".ogg": "audio/ogg",
@@ -87,8 +89,6 @@ class DeepgramSTTRuntimeAdapter:
 
             transcript_text = ""
             segments: list[DiarizedSegment] = []
-            detected_language: str | None = self._language
-
             results = self._field(response, "results")
             channels = self._field(results, "channels") or []
             if channels:
@@ -101,15 +101,11 @@ class DeepgramSTTRuntimeAdapter:
                     if self._diarization:
                         segments = self._extract_segments(alt)
 
-                channel_language = self._field(channel, "detected_language")
-                if channel_language:
-                    detected_language = channel_language
-
             return STTResult(
                 transcript_text=transcript_text,
                 provider="deepgram",
                 mode="api",
-                language=detected_language,
+                language=self._language,
                 segments=segments,
             )
 

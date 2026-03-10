@@ -63,6 +63,57 @@ class TestDeepgramAdapter:
                 with pytest.raises(STTProviderAuthError):
                     adapter.transcribe(audio_path="/tmp/test.wav")
 
+    def test_deepgram_adapter_uses_mp3_content_type(self) -> None:
+        from lecture_auto.deepgram_adapter import DeepgramSTTRuntimeAdapter
+
+        config = STTConfig(mode="api", api_provider="deepgram", api_key="dg-key")
+        adapter = DeepgramSTTRuntimeAdapter(config=config)
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "results": {
+                "channels": [{"alternatives": [{"transcript": "ok"}]}],
+            }
+        }
+
+        captured_headers: dict[str, str] = {}
+
+        mock_client = MagicMock()
+        mock_client.__enter__ = MagicMock(return_value=mock_client)
+        mock_client.__exit__ = MagicMock(return_value=False)
+
+        def _post(*args, **kwargs):
+            headers = kwargs.get("headers") or {}
+            captured_headers.update(headers)
+            return mock_response
+
+        mock_client.post.side_effect = _post
+
+        with patch("httpx.Client", return_value=mock_client):
+            with patch("builtins.open", MagicMock()):
+                result = adapter.transcribe(audio_path="/tmp/test.mp3")
+
+        assert result.transcript_text == "ok"
+        assert captured_headers["Content-Type"] == "audio/mp3"
+
+    def test_deepgram_adapter_maps_httpx_timeout_to_transient_error(self) -> None:
+        from lecture_auto.deepgram_adapter import DeepgramSTTRuntimeAdapter
+        import httpx
+
+        config = STTConfig(mode="api", api_provider="deepgram", api_key="dg-key")
+        adapter = DeepgramSTTRuntimeAdapter(config=config)
+
+        mock_client = MagicMock()
+        mock_client.__enter__ = MagicMock(return_value=mock_client)
+        mock_client.__exit__ = MagicMock(return_value=False)
+        mock_client.post.side_effect = httpx.TimeoutException("request timed out")
+
+        with patch("httpx.Client", return_value=mock_client):
+            with patch("builtins.open", MagicMock()):
+                with pytest.raises(STTTransientNetworkError, match="timed out"):
+                    adapter.transcribe(audio_path="/tmp/test.mp3")
+
 
 class TestFasterWhisperAdapter:
     """Tests for FasterWhisperSTTRuntimeAdapter using mocked model."""
