@@ -42,7 +42,7 @@ def app_callback(
         from lecture_auto.tui import run_tui
         service = _build_service()
         try:
-            run_tui(service)
+            run_tui(service, service_factory=_build_service)
         except (KeyboardInterrupt, EOFError):
             typer.echo("\nBye! 👋")
         raise typer.Exit()

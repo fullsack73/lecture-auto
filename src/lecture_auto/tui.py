@@ -306,7 +306,9 @@ def _menu_summarize(service) -> None:
     typer.echo()
 
 
-def _menu_config() -> None:
+def _menu_config() -> bool:
+    """Config menu. Returns True if config was saved (service should be rebuilt)."""
+    config_changed = False
     while True:
         choice = _select(
             "Config",
@@ -319,7 +321,7 @@ def _menu_config() -> None:
         )
 
         if choice in (None, "__back__"):
-            return
+            return config_changed
 
         if choice == "show":
             data = _load_config()
@@ -384,6 +386,7 @@ def _menu_config() -> None:
             if updated:
                 _save_config(data)
                 typer.echo("✓ Config saved.")
+                config_changed = True
             elif selected_key == "__save__":
                 typer.echo("No changes made.")
 
@@ -392,8 +395,14 @@ def _menu_config() -> None:
 
 # ── Entry Point ────────────────────────────────────────────────────────────────
 
-def run_tui(service) -> None:
-    """Launch the interactive TUI main loop."""
+def run_tui(service, *, service_factory=None) -> None:
+    """Launch the interactive TUI main loop.
+    
+    Args:
+        service: Initial SessionService instance.
+        service_factory: Optional callable that returns a fresh SessionService.
+            Called after config changes to pick up new settings.
+    """
     typer.echo("\n🎓  lecture-auto  — interactive mode  (Ctrl+C to exit)\n")
 
     while True:
@@ -426,7 +435,10 @@ def run_tui(service) -> None:
             elif choice == "summarize":
                 _menu_summarize(service)
             elif choice == "config":
-                _menu_config()
+                config_changed = _menu_config()
+                if config_changed and service_factory:
+                    service = service_factory()
+                    typer.echo("🔄 Settings reloaded.")
         except (KeyboardInterrupt, EOFError):
             typer.echo("\nReturning to main menu…\n")
             continue
