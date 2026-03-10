@@ -224,6 +224,7 @@ def _menu_transcription(service) -> None:
             "Transcription",
             [
                 questionary.Choice("📝  Run transcription", "run"),
+                questionary.Choice("✨  Refine transcript", "refine"),
                 SEPARATOR,
                 questionary.Choice("← Back", "__back__"),
             ],
@@ -242,6 +243,17 @@ def _menu_transcription(service) -> None:
                 _echo_result(result)
             except SessionCommandError as exc:
                 _echo_error("transcription run", exc)
+                
+        elif choice == "refine":
+            session_id = _select_session(service, "Select session to refine transcript")
+            if session_id is None:
+                continue
+            typer.echo("Refining transcript… (this may take a while)")
+            try:
+                result = service.transcript_refine(session_reference=session_id)
+                _echo_result(result)
+            except SessionCommandError as exc:
+                _echo_error("transcript refine", exc)
 
         typer.echo()
 
