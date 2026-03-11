@@ -454,19 +454,27 @@ class SessionService:
                 if mode == "api" and attempt <= retry_limit:
                     continue
                 self._mark_transcription_failure(session, "network/transient")
-                raise self.map_transcription_failure("network/transient") from exc
+                raise self.map_transcription_failure(
+                    "network/transient", detail=str(exc)
+                ) from exc
             except STTProviderAuthError as exc:
                 self._mark_transcription_failure(session, "provider_auth")
-                raise self.map_transcription_failure("provider_auth") from exc
+                raise self.map_transcription_failure(
+                    "provider_auth", detail=str(exc)
+                ) from exc
             except STTAudioDecodeError as exc:
                 self._mark_transcription_failure(session, "audio_decode")
-                raise self.map_transcription_failure("audio_decode") from exc
+                raise self.map_transcription_failure(
+                    "audio_decode", detail=str(exc)
+                ) from exc
             except STTConfigError as exc:
                 self._mark_transcription_failure(session, "configuration")
-                raise self.map_transcription_failure("configuration") from exc
+                raise self.map_transcription_failure(
+                    "configuration", detail=str(exc)
+                ) from exc
             except STTRuntimeError as exc:
                 self._mark_transcription_failure(session, "runtime")
-                raise self.map_transcription_failure("runtime") from exc
+                raise self.map_transcription_failure("runtime", detail=str(exc)) from exc
 
         output_text = transcript_text or ""
         if transcript_result and transcript_result.segments:
@@ -553,7 +561,12 @@ class SessionService:
             )
         return mapping[failure_kind]
 
-    def map_transcription_failure(self, failure_kind: str) -> SessionCommandError:
+    def map_transcription_failure(
+        self,
+        failure_kind: str,
+        *,
+        detail: str | None = None,
+    ) -> SessionCommandError:
         mapping = {
             "configuration": SessionCommandError(
                 code="TRANSCRIPTION_CONFIG_ERROR",
@@ -586,7 +599,7 @@ class SessionService:
                 exit_code=6,
             ),
         }
-        return mapping.get(
+        result = mapping.get(
             failure_kind,
             SessionCommandError(
                 code="TRANSCRIPTION_RUNTIME_ERROR",
@@ -595,6 +608,14 @@ class SessionService:
                 exit_code=6,
             ),
         )
+        if detail and detail.strip():
+            return SessionCommandError(
+                code=result.code,
+                message=result.message,
+                guidance=f"{result.guidance} Detail: {detail.strip()}",
+                exit_code=result.exit_code,
+            )
+        return result
 
     def _persist_or_raise(self, session: dict[str, Any]) -> dict[str, Any]:
         try:

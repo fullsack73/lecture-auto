@@ -58,6 +58,7 @@ def _build_service() -> SessionService:
     config_gemini_api_key = None
     config_audio_format = None
     config_google_project_id = None
+    config_google_location = None
     config_path = _get_global_config_path()
     
     if config_path.exists():
@@ -72,6 +73,7 @@ def _build_service() -> SessionService:
                 config_gemini_api_key = config_data.get("gemini_api_key")
                 config_audio_format = config_data.get("audio_format")
                 config_google_project_id = config_data.get("google_project_id")
+                config_google_location = config_data.get("google_location")
         except Exception:
             pass
 
@@ -104,6 +106,7 @@ def _build_service() -> SessionService:
         local_model_name=os.environ.get("STT_LOCAL_MODEL", "base"),
         language=config_stt_language,
         google_project_id=os.environ.get("GOOGLE_PROJECT_ID") or config_google_project_id,
+        google_location=os.environ.get("GOOGLE_LOCATION") or config_google_location or "us-central1",
     )
 
     return SessionService(

@@ -160,11 +160,12 @@ class TestGoogleChirp3Adapter:
     # Constructor validation
     # ------------------------------------------------------------------
 
-    def test_rejects_empty_api_key(self) -> None:
+    def test_rejects_when_no_api_key_and_no_access_token(self) -> None:
         from lecture_auto.google_chirp3_adapter import GoogleChirp3STTRuntimeAdapter
 
-        with pytest.raises(STTConfigError, match="API key is required"):
-            GoogleChirp3STTRuntimeAdapter(config=self._make_config(api_key=""))
+        with patch.dict("os.environ", {}, clear=True):
+            with pytest.raises(STTConfigError, match="authentication is required"):
+                GoogleChirp3STTRuntimeAdapter(config=self._make_config(api_key=""))
 
     def test_rejects_missing_project_id(self) -> None:
         from lecture_auto.google_chirp3_adapter import GoogleChirp3STTRuntimeAdapter
@@ -201,6 +202,7 @@ class TestGoogleChirp3Adapter:
         from lecture_auto.google_chirp3_adapter import GoogleChirp3STTRuntimeAdapter
 
         adapter = GoogleChirp3STTRuntimeAdapter(config=self._make_config())
+        mock_recognizer_url = "https://speech.googleapis.com/v2/projects/p/locations/us-central1/recognizers/lecture-auto-chirp3"
 
         mock_response = MagicMock()
         mock_response.status_code = 401
@@ -212,14 +214,16 @@ class TestGoogleChirp3Adapter:
         mock_client.post.return_value = mock_response
 
         with patch("httpx.Client", return_value=mock_client):
-            with patch("builtins.open", mock_open(read_data=b"fake audio")):
-                with pytest.raises(STTProviderAuthError):
-                    adapter.transcribe(audio_path="/tmp/test.wav")
+            with patch.object(adapter, "_resolve_recognizer_url", return_value=mock_recognizer_url):
+                with patch("builtins.open", mock_open(read_data=b"fake audio")):
+                    with pytest.raises(STTProviderAuthError):
+                        adapter.transcribe(audio_path="/tmp/test.wav")
 
     def test_maps_403_to_provider_auth_error(self) -> None:
         from lecture_auto.google_chirp3_adapter import GoogleChirp3STTRuntimeAdapter
 
         adapter = GoogleChirp3STTRuntimeAdapter(config=self._make_config())
+        mock_recognizer_url = "https://speech.googleapis.com/v2/projects/p/locations/us-central1/recognizers/lecture-auto-chirp3"
 
         mock_response = MagicMock()
         mock_response.status_code = 403
@@ -231,15 +235,17 @@ class TestGoogleChirp3Adapter:
         mock_client.post.return_value = mock_response
 
         with patch("httpx.Client", return_value=mock_client):
-            with patch("builtins.open", mock_open(read_data=b"fake audio")):
-                with pytest.raises(STTProviderAuthError):
-                    adapter.transcribe(audio_path="/tmp/test.wav")
+            with patch.object(adapter, "_resolve_recognizer_url", return_value=mock_recognizer_url):
+                with patch("builtins.open", mock_open(read_data=b"fake audio")):
+                    with pytest.raises(STTProviderAuthError):
+                        adapter.transcribe(audio_path="/tmp/test.wav")
 
     def test_maps_timeout_to_transient_error(self) -> None:
         from lecture_auto.google_chirp3_adapter import GoogleChirp3STTRuntimeAdapter
         import httpx
 
         adapter = GoogleChirp3STTRuntimeAdapter(config=self._make_config())
+        mock_recognizer_url = "https://speech.googleapis.com/v2/projects/p/locations/us-central1/recognizers/lecture-auto-chirp3"
 
         mock_client = MagicMock()
         mock_client.__enter__ = MagicMock(return_value=mock_client)
@@ -247,9 +253,10 @@ class TestGoogleChirp3Adapter:
         mock_client.post.side_effect = httpx.TimeoutException("request timed out")
 
         with patch("httpx.Client", return_value=mock_client):
-            with patch("builtins.open", mock_open(read_data=b"fake audio")):
-                with pytest.raises(STTTransientNetworkError, match="timed out"):
-                    adapter.transcribe(audio_path="/tmp/test.wav")
+            with patch.object(adapter, "_resolve_recognizer_url", return_value=mock_recognizer_url):
+                with patch("builtins.open", mock_open(read_data=b"fake audio")):
+                    with pytest.raises(STTTransientNetworkError, match="timed out"):
+                        adapter.transcribe(audio_path="/tmp/test.wav")
 
     # ------------------------------------------------------------------
     # Sync transcription (small file)
@@ -274,8 +281,9 @@ class TestGoogleChirp3Adapter:
         mock_client.post.return_value = mock_response
 
         with patch("httpx.Client", return_value=mock_client):
-            with patch("builtins.open", mock_open(read_data=b"fake audio")):
-                result = adapter.transcribe(audio_path="/tmp/test.wav")
+            with patch.object(adapter, "_resolve_recognizer_url", return_value="https://speech.googleapis.com/v2/projects/p/locations/us-central1/recognizers/lecture-auto-chirp3"):
+                with patch("builtins.open", mock_open(read_data=b"fake audio")):
+                    result = adapter.transcribe(audio_path="/tmp/test.wav")
 
         assert result.transcript_text == "Hello world."
         assert result.provider == "google-chirp3"
@@ -305,20 +313,18 @@ class TestGoogleChirp3Adapter:
         mock_client.post.side_effect = _post
 
         with patch("httpx.Client", return_value=mock_client):
-            with patch("builtins.open", mock_open(read_data=b"fake audio")):
-                adapter.transcribe(audio_path="/tmp/test.wav")
+            with patch.object(adapter, "_resolve_recognizer_url", return_value="https://speech.googleapis.com/v2/projects/p/locations/us-central1/recognizers/lecture-auto-chirp3"):
+                with patch("builtins.open", mock_open(read_data=b"fake audio")):
+                    adapter.transcribe(audio_path="/tmp/test.wav")
 
-        assert captured_body["config"]["model"] == "chirp_3"
+        assert "model" not in captured_body["config"]
 
     # ------------------------------------------------------------------
     # Async / batch transcription (large file)
     # ------------------------------------------------------------------
 
-    def test_async_transcription_polls_and_returns_result(self) -> None:
-        from lecture_auto.google_chirp3_adapter import (
-            GoogleChirp3STTRuntimeAdapter,
-            _SYNC_SIZE_THRESHOLD_BYTES,
-        )
+    def test_batch_transcription_with_gcs_uri_polls_and_returns_result(self) -> None:
+        from lecture_auto.google_chirp3_adapter import GoogleChirp3STTRuntimeAdapter
 
         adapter = GoogleChirp3STTRuntimeAdapter(config=self._make_config())
 
@@ -338,7 +344,9 @@ class TestGoogleChirp3Adapter:
                 "results": {
                     "0": {
                         "inlineResult": {
-                            "results": [{"alternatives": [{"transcript": "Long lecture text."}]}]
+                            "transcript": {
+                                "results": [{"alternatives": [{"transcript": "Long lecture text."}]}]
+                            }
                         }
                     }
                 }
@@ -351,21 +359,46 @@ class TestGoogleChirp3Adapter:
         mock_client.post.return_value = batch_response
         mock_client.get.side_effect = [not_done_poll, done_poll]
 
-        large_audio = b"x" * (_SYNC_SIZE_THRESHOLD_BYTES + 1)
-
         with patch("httpx.Client", return_value=mock_client):
-            with patch("builtins.open", mock_open(read_data=large_audio)):
-                with patch("time.sleep"):
-                    result = adapter.transcribe(audio_path="/tmp/large.wav")
+            with patch("time.sleep"):
+                result = adapter.transcribe(audio_path="gs://bucket/large.wav")
 
         assert result.transcript_text == "Long lecture text."
         assert result.provider == "google-chirp3"
+
+    def test_local_large_audio_uses_chunked_sync_transcription(self) -> None:
+        from lecture_auto.google_chirp3_adapter import (
+            GoogleChirp3STTRuntimeAdapter,
+            _SYNC_SIZE_THRESHOLD_BYTES,
+        )
+
+        adapter = GoogleChirp3STTRuntimeAdapter(config=self._make_config())
+        large_audio = b"x" * (_SYNC_SIZE_THRESHOLD_BYTES + 1)
+        chunked_result = STTResult(
+            transcript_text="chunk-1 chunk-2",
+            provider="google-chirp3",
+            mode="api",
+            language="en",
+        )
+
+        with patch("httpx.Client", return_value=MagicMock()):
+            with patch("builtins.open", mock_open(read_data=large_audio)):
+                with patch.object(
+                    adapter,
+                    "_transcribe_large_local_file",
+                    return_value=chunked_result,
+                ) as mocked_chunked:
+                    with patch.object(adapter, "_resolve_recognizer_url", return_value="https://speech.googleapis.com/v2/projects/p/locations/us-central1/recognizers/lecture-auto-chirp3"):
+                        result = adapter.transcribe(audio_path="/tmp/large.wav")
+
+        assert mocked_chunked.called
+        assert result.transcript_text == "chunk-1 chunk-2"
 
     # ------------------------------------------------------------------
     # Diarization segment extraction
     # ------------------------------------------------------------------
 
-    def test_diarization_extracts_segments(self) -> None:
+    def test_diarization_extracts_segments_from_batch_inline_transcript(self) -> None:
         from lecture_auto.google_chirp3_adapter import GoogleChirp3STTRuntimeAdapter
 
         config = self._make_config(diarization=True)
@@ -374,37 +407,64 @@ class TestGoogleChirp3Adapter:
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.json.return_value = {
-            "results": [
-                {
-                    "alternatives": [
-                        {
-                            "transcript": "Hello world okay great",
-                            "words": [
-                                {"word": "Hello", "startOffset": "0.0s", "endOffset": "0.5s", "speakerLabel": "1"},
-                                {"word": "world", "startOffset": "0.6s", "endOffset": "1.0s", "speakerLabel": "1"},
-                                {"word": "okay", "startOffset": "1.5s", "endOffset": "2.0s", "speakerLabel": "2"},
-                                {"word": "great", "startOffset": "2.1s", "endOffset": "2.5s", "speakerLabel": "2"},
-                            ],
+            "name": "projects/my-project/locations/global/operations/op456"
+        }
+
+        done_poll = MagicMock()
+        done_poll.status_code = 200
+        done_poll.json.return_value = {
+            "done": True,
+            "response": {
+                "results": {
+                    "gs://bucket/diarize.wav": {
+                        "inlineResult": {
+                            "transcript": {
+                                "results": [
+                                    {
+                                        "alternatives": [
+                                            {
+                                                "transcript": "Hello world okay great",
+                                                "words": [
+                                                    {"word": "Hello", "startOffset": "0.0s", "endOffset": "0.5s", "speakerLabel": "1"},
+                                                    {"word": "world", "startOffset": "0.6s", "endOffset": "1.0s", "speakerLabel": "1"},
+                                                    {"word": "okay", "startOffset": "1.5s", "endOffset": "2.0s", "speakerLabel": "2"},
+                                                    {"word": "great", "startOffset": "2.1s", "endOffset": "2.5s", "speakerLabel": "2"},
+                                                ],
+                                            }
+                                        ]
+                                    }
+                                ]
+                            }
                         }
-                    ]
+                    }
                 }
-            ]
+            },
         }
 
         mock_client = MagicMock()
         mock_client.__enter__ = MagicMock(return_value=mock_client)
         mock_client.__exit__ = MagicMock(return_value=False)
         mock_client.post.return_value = mock_response
+        mock_client.get.return_value = done_poll
 
         with patch("httpx.Client", return_value=mock_client):
-            with patch("builtins.open", mock_open(read_data=b"fake audio")):
-                result = adapter.transcribe(audio_path="/tmp/test.wav")
+            result = adapter.transcribe(audio_path="gs://bucket/diarize.wav")
 
         assert len(result.segments) == 2
         assert result.segments[0].speaker == "1"
         assert "Hello" in result.segments[0].text
         assert result.segments[1].speaker == "2"
         assert "okay" in result.segments[1].text
+
+    def test_diarization_with_local_file_requires_gcs_uri(self) -> None:
+        from lecture_auto.google_chirp3_adapter import GoogleChirp3STTRuntimeAdapter
+
+        config = self._make_config(diarization=True)
+        adapter = GoogleChirp3STTRuntimeAdapter(config=config)
+
+        with patch("httpx.Client", return_value=MagicMock()):
+            with pytest.raises(STTConfigError, match="Cloud Storage URI"):
+                adapter.transcribe(audio_path="/tmp/test.wav")
 
 
 class TestSTTConfigCLIBehaviors:

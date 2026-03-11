@@ -55,6 +55,31 @@ def _select(message: str, choices: list) -> str | None:
     return questionary.select(message, choices=choices, style=STYLE).ask()
 
 
+def _select_stt_provider(current: str = "") -> str | None:
+    """Select an STT API provider for persisted config."""
+    choices = [
+        questionary.Choice(
+            title="OpenAI-compatible",
+            value="openai-compatible",
+            checked=current == "openai-compatible",
+        ),
+        questionary.Choice(
+            title="Deepgram",
+            value="deepgram",
+            checked=current == "deepgram",
+        ),
+        questionary.Choice(
+            title="Google Chirp 3",
+            value="google-chirp3",
+            checked=current == "google-chirp3",
+        ),
+        questionary.Separator(),
+        questionary.Choice(title="Clear value", value="__clear__"),
+        questionary.Choice(title="Cancel", value="__cancel__"),
+    ]
+    return _select("Select STT API provider", choices)
+
+
 def _select_session(service, prompt: str = "Select a session") -> str | None:
     """Show session list and let user pick one by title / id."""
     try:
@@ -333,12 +358,15 @@ def _menu_config() -> bool:
         elif choice == "set":
             data = _load_config()
             updated = False
+            selected_key = None
 
             fields = [
                 ("workspace", "Workspace directory"),
                 ("stt_language", "STT language (e.g. ko)"),
                 ("llm_language", "LLM language (e.g. korean)"),
-                ("stt_api_provider", "STT API provider (e.g. deepgram)"),
+                ("stt_api_provider", "STT API provider"),
+                ("google_project_id", "Google Cloud project ID (for google-chirp3)"),
+                ("google_location", "Google Cloud location (default: us-central1)"),
                 ("stt_api_key", "STT API key"),
                 ("gemini_api_key", "Gemini API key"),
                 ("audio_format", "Audio format (wav or mp3)"),
@@ -363,13 +391,23 @@ def _menu_config() -> bool:
                     
                 if selected_key == "__save__":
                     break
-                
-                prompt = next(label for k, label in fields if k == selected_key)
-                value = _ask(f"New value for {prompt} (leave blank to skip/clear)", default=data.get(selected_key, ""))
+
+                if selected_key == "stt_api_provider":
+                    value = _select_stt_provider(data.get(selected_key, "") or "")
+                    if value in (None, "__cancel__"):
+                        continue
+                    if value == "__clear__":
+                        value = ""
+                else:
+                    prompt = next(label for k, label in fields if k == selected_key)
+                    value = _ask(
+                        f"New value for {prompt} (leave blank to skip/clear)",
+                        default=data.get(selected_key, ""),
+                    )
                 
                 if value is None:  # Ctrl+C
                     break
-                    
+
                 value = value.strip()
                 if value:
                     if selected_key == "audio_format" and value not in ("wav", "mp3"):
