@@ -5,7 +5,7 @@ from typing import Literal
 
 STTMode = Literal["local", "api"]
 
-SUPPORTED_API_PROVIDERS = {"openai-compatible", "deepgram"}
+SUPPORTED_API_PROVIDERS = {"openai-compatible", "deepgram", "google-chirp3"}
 
 
 @dataclass
@@ -18,6 +18,7 @@ class STTConfig:
     local_model_name: str | None = "base"
     language: str | None = None
     diarization: bool = False
+    google_project_id: str | None = None
 
     def validate(self) -> None:
         if self.mode not in {"local", "api"}:
@@ -28,6 +29,11 @@ class STTConfig:
                 raise ValueError("API provider is required when STT mode is 'api'.")
             if not self.api_key or not self.api_key.strip():
                 raise ValueError("API key is required when STT mode is 'api'.")
+            if self.api_provider == "google-chirp3":
+                if not self.google_project_id or not self.google_project_id.strip():
+                    raise ValueError(
+                        "google_project_id is required when using the 'google-chirp3' STT provider."
+                    )
 
         if self.mode == "local":
             if not self.local_model_name or not self.local_model_name.strip():

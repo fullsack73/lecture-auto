@@ -57,6 +57,7 @@ def _build_service() -> SessionService:
     config_stt_api_key = None
     config_gemini_api_key = None
     config_audio_format = None
+    config_google_project_id = None
     config_path = _get_global_config_path()
     
     if config_path.exists():
@@ -70,6 +71,7 @@ def _build_service() -> SessionService:
                 config_stt_api_key = config_data.get("stt_api_key")
                 config_gemini_api_key = config_data.get("gemini_api_key")
                 config_audio_format = config_data.get("audio_format")
+                config_google_project_id = config_data.get("google_project_id")
         except Exception:
             pass
 
@@ -101,6 +103,7 @@ def _build_service() -> SessionService:
         api_key=os.environ.get("STT_API_KEY") or config_stt_api_key,
         local_model_name=os.environ.get("STT_LOCAL_MODEL", "base"),
         language=config_stt_language,
+        google_project_id=os.environ.get("GOOGLE_PROJECT_ID") or config_google_project_id,
     )
 
     return SessionService(
@@ -238,10 +241,11 @@ def config_set(
     workspace: str | None = typer.Option(None, "--workspace", "-w", help="Default workspace directory"),
     stt_language: str | None = typer.Option(None, "--stt-language", "-stt", help="Default language for STT transcription (e.g. korean)"),
     llm_language: str | None = typer.Option(None, "--llm-language", "-llm", help="Default language for summaries and generated notes (e.g. korean)"),
-    stt_api_provider: str | None = typer.Option(None, "--stt-api-provider", help="STT API provider (e.g. deepgram)"),
+    stt_api_provider: str | None = typer.Option(None, "--stt-api-provider", help="STT API provider (e.g. deepgram, google-chirp3)"),
     stt_api_key: str | None = typer.Option(None, "--stt-api-key", help="STT API key"),
     gemini_api_key: str | None = typer.Option(None, "--gemini-api-key", help="Gemini API key for LLM"),
     audio_format: str | None = typer.Option(None, "--audio-format", help="Default audio format for recordings (wav or mp3)"),
+    google_project_id: str | None = typer.Option(None, "--google-project-id", help="Google Cloud project ID (required for google-chirp3 STT provider)"),
 ) -> None:
     config_path = _get_global_config_path()
     config_data = {}
@@ -289,6 +293,11 @@ def config_set(
             raise typer.Exit(code=1)
         config_data["audio_format"] = audio_format
         typer.echo(f"Global audio format set to: {config_data['audio_format']}")
+        updated = True
+
+    if google_project_id is not None:
+        config_data["google_project_id"] = google_project_id
+        typer.echo(f"Google Cloud project ID set to: {config_data['google_project_id']}")
         updated = True
 
     if not updated:
