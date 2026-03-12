@@ -19,7 +19,7 @@ class STTConfig:
     language: str | None = None
     diarization: bool = False
     google_project_id: str | None = None
-    google_location: str = "us-central1"
+    google_location: str = "us"
 
     def validate(self) -> None:
         if self.mode not in {"local", "api"}:

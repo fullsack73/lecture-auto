@@ -55,6 +55,8 @@ def _build_service() -> SessionService:
     config_llm_language = None
     config_stt_api_provider = None
     config_stt_api_key = None
+    config_stt_mode = None
+    config_stt_local_model = None
     config_gemini_api_key = None
     config_audio_format = None
     config_google_project_id = None
@@ -70,6 +72,8 @@ def _build_service() -> SessionService:
                 config_llm_language = config_data.get("llm_language")
                 config_stt_api_provider = config_data.get("stt_api_provider")
                 config_stt_api_key = config_data.get("stt_api_key")
+                config_stt_mode = config_data.get("stt_mode")
+                config_stt_local_model = config_data.get("stt_local_model")
                 config_gemini_api_key = config_data.get("gemini_api_key")
                 config_audio_format = config_data.get("audio_format")
                 config_google_project_id = config_data.get("google_project_id")
@@ -100,13 +104,13 @@ def _build_service() -> SessionService:
             llm_adapter = None
 
     stt_config = STTConfig(
-        mode=os.environ.get("STT_MODE", "api"),
+        mode=os.environ.get("STT_MODE") or config_stt_mode or "api",
         api_provider=os.environ.get("STT_API_PROVIDER") or config_stt_api_provider or "openai-compatible",
         api_key=os.environ.get("STT_API_KEY") or config_stt_api_key,
-        local_model_name=os.environ.get("STT_LOCAL_MODEL", "base"),
+        local_model_name=os.environ.get("STT_LOCAL_MODEL") or config_stt_local_model or "base",
         language=config_stt_language,
         google_project_id=os.environ.get("GOOGLE_PROJECT_ID") or config_google_project_id,
-        google_location=os.environ.get("GOOGLE_LOCATION") or config_google_location or "us-central1",
+        google_location=os.environ.get("GOOGLE_LOCATION") or config_google_location or "us",
     )
 
     return SessionService(
@@ -246,6 +250,8 @@ def config_set(
     llm_language: str | None = typer.Option(None, "--llm-language", "-llm", help="Default language for summaries and generated notes (e.g. korean)"),
     stt_api_provider: str | None = typer.Option(None, "--stt-api-provider", help="STT API provider (e.g. deepgram, google-chirp3)"),
     stt_api_key: str | None = typer.Option(None, "--stt-api-key", help="STT API key"),
+    stt_mode: str | None = typer.Option(None, "--stt-mode", help="STT mode (api or local)"),
+    stt_local_model: str | None = typer.Option(None, "--stt-local-model", help="Local Whisper model name (e.g. base, medium, large-v3)"),
     gemini_api_key: str | None = typer.Option(None, "--gemini-api-key", help="Gemini API key for LLM"),
     audio_format: str | None = typer.Option(None, "--audio-format", help="Default audio format for recordings (wav or mp3)"),
     google_project_id: str | None = typer.Option(None, "--google-project-id", help="Google Cloud project ID (required for google-chirp3 STT provider)"),
@@ -284,6 +290,26 @@ def config_set(
         config_data["stt_api_key"] = stt_api_key
         typer.echo(f"Global STT API key configured.")
         updated = True
+
+    if stt_mode is not None:
+        normalized_mode = stt_mode.strip().lower()
+        if normalized_mode not in {"api", "local"}:
+            typer.echo("STT mode must be 'api' or 'local'.", err=True)
+            raise typer.Exit(code=1)
+        config_data["stt_mode"] = normalized_mode
+        typer.echo(f"Global STT mode set to: {config_data['stt_mode']}")
+        updated = True
+
+    if stt_local_model is not None:
+        normalized_model = stt_local_model.strip()
+        if normalized_model:
+            config_data["stt_local_model"] = normalized_model
+            typer.echo(f"Global STT local model set to: {config_data['stt_local_model']}")
+            updated = True
+        elif "stt_local_model" in config_data:
+            del config_data["stt_local_model"]
+            typer.echo("Global STT local model cleared.")
+            updated = True
 
     if gemini_api_key is not None:
         config_data["gemini_api_key"] = gemini_api_key

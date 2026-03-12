@@ -179,6 +179,13 @@ class TestGoogleChirp3Adapter:
         with pytest.raises(STTConfigError, match="project ID is required"):
             GoogleChirp3STTRuntimeAdapter(config=self._make_config(google_project_id="  "))
 
+    def test_normalizes_short_language_code_for_chirp3(self) -> None:
+        from lecture_auto.google_chirp3_adapter import GoogleChirp3STTRuntimeAdapter
+
+        adapter = GoogleChirp3STTRuntimeAdapter(config=self._make_config(language="ko"))
+        config_payload = adapter._build_recognition_config()
+        assert config_payload["languageCodes"] == ["ko-KR"]
+
     def test_rejects_empty_audio_path(self) -> None:
         from lecture_auto.google_chirp3_adapter import GoogleChirp3STTRuntimeAdapter
 
@@ -202,7 +209,7 @@ class TestGoogleChirp3Adapter:
         from lecture_auto.google_chirp3_adapter import GoogleChirp3STTRuntimeAdapter
 
         adapter = GoogleChirp3STTRuntimeAdapter(config=self._make_config())
-        mock_recognizer_url = "https://speech.googleapis.com/v2/projects/p/locations/us-central1/recognizers/lecture-auto-chirp3"
+        mock_recognizer_url = "https://us-speech.googleapis.com/v2/projects/p/locations/us/recognizers/_"
 
         mock_response = MagicMock()
         mock_response.status_code = 401
@@ -223,7 +230,7 @@ class TestGoogleChirp3Adapter:
         from lecture_auto.google_chirp3_adapter import GoogleChirp3STTRuntimeAdapter
 
         adapter = GoogleChirp3STTRuntimeAdapter(config=self._make_config())
-        mock_recognizer_url = "https://speech.googleapis.com/v2/projects/p/locations/us-central1/recognizers/lecture-auto-chirp3"
+        mock_recognizer_url = "https://us-speech.googleapis.com/v2/projects/p/locations/us/recognizers/_"
 
         mock_response = MagicMock()
         mock_response.status_code = 403
@@ -245,7 +252,7 @@ class TestGoogleChirp3Adapter:
         import httpx
 
         adapter = GoogleChirp3STTRuntimeAdapter(config=self._make_config())
-        mock_recognizer_url = "https://speech.googleapis.com/v2/projects/p/locations/us-central1/recognizers/lecture-auto-chirp3"
+        mock_recognizer_url = "https://us-speech.googleapis.com/v2/projects/p/locations/us/recognizers/_"
 
         mock_client = MagicMock()
         mock_client.__enter__ = MagicMock(return_value=mock_client)
@@ -281,14 +288,14 @@ class TestGoogleChirp3Adapter:
         mock_client.post.return_value = mock_response
 
         with patch("httpx.Client", return_value=mock_client):
-            with patch.object(adapter, "_resolve_recognizer_url", return_value="https://speech.googleapis.com/v2/projects/p/locations/us-central1/recognizers/lecture-auto-chirp3"):
+            with patch.object(adapter, "_resolve_recognizer_url", return_value="https://us-speech.googleapis.com/v2/projects/p/locations/us/recognizers/_"):
                 with patch("builtins.open", mock_open(read_data=b"fake audio")):
                     result = adapter.transcribe(audio_path="/tmp/test.wav")
 
         assert result.transcript_text == "Hello world."
         assert result.provider == "google-chirp3"
         assert result.mode == "api"
-        assert result.language == "en"
+        assert result.language == "en-US"
         assert result.segments == []
 
     def test_sync_transcription_uses_chirp3_model(self) -> None:
@@ -313,11 +320,11 @@ class TestGoogleChirp3Adapter:
         mock_client.post.side_effect = _post
 
         with patch("httpx.Client", return_value=mock_client):
-            with patch.object(adapter, "_resolve_recognizer_url", return_value="https://speech.googleapis.com/v2/projects/p/locations/us-central1/recognizers/lecture-auto-chirp3"):
+            with patch.object(adapter, "_resolve_recognizer_url", return_value="https://us-speech.googleapis.com/v2/projects/p/locations/us/recognizers/_"):
                 with patch("builtins.open", mock_open(read_data=b"fake audio")):
                     adapter.transcribe(audio_path="/tmp/test.wav")
 
-        assert "model" not in captured_body["config"]
+        assert captured_body["config"]["model"] == "chirp_3"
 
     # ------------------------------------------------------------------
     # Async / batch transcription (large file)
@@ -388,7 +395,7 @@ class TestGoogleChirp3Adapter:
                     "_transcribe_large_local_file",
                     return_value=chunked_result,
                 ) as mocked_chunked:
-                    with patch.object(adapter, "_resolve_recognizer_url", return_value="https://speech.googleapis.com/v2/projects/p/locations/us-central1/recognizers/lecture-auto-chirp3"):
+                    with patch.object(adapter, "_resolve_recognizer_url", return_value="https://us-speech.googleapis.com/v2/projects/p/locations/us/recognizers/_"):
                         result = adapter.transcribe(audio_path="/tmp/large.wav")
 
         assert mocked_chunked.called

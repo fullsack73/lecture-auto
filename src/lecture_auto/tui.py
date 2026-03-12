@@ -80,6 +80,45 @@ def _select_stt_provider(current: str = "") -> str | None:
     return _select("Select STT API provider", choices)
 
 
+def _select_stt_mode(current: str = "") -> str | None:
+    """Select STT mode for persisted config."""
+    choices = [
+        questionary.Choice(
+            title="API provider",
+            value="api",
+            checked=current == "api",
+        ),
+        questionary.Choice(
+            title="Local Whisper model",
+            value="local",
+            checked=current == "local",
+        ),
+        questionary.Separator(),
+        questionary.Choice(title="Clear value", value="__clear__"),
+        questionary.Choice(title="Cancel", value="__cancel__"),
+    ]
+    return _select("Select STT mode", choices)
+
+
+def _select_stt_local_model(current: str = "") -> str | None:
+    """Select a recommended local Whisper model or enter one manually."""
+    choices = [
+        questionary.Choice(title="base", value="base", checked=current == "base"),
+        questionary.Choice(title="small", value="small", checked=current == "small"),
+        questionary.Choice(title="medium", value="medium", checked=current == "medium"),
+        questionary.Choice(title="large-v3", value="large-v3", checked=current == "large-v3"),
+        questionary.Separator(),
+        questionary.Choice(title="Enter custom model name...", value="__manual__"),
+        questionary.Choice(title="Clear value", value="__clear__"),
+        questionary.Choice(title="Cancel", value="__cancel__"),
+    ]
+    selection = _select("Select local Whisper model", choices)
+    if selection != "__manual__":
+        return selection
+    manual = _ask("Custom local model name", default=current)
+    return manual
+
+
 def _select_session(service, prompt: str = "Select a session") -> str | None:
     """Show session list and let user pick one by title / id."""
     try:
@@ -363,10 +402,12 @@ def _menu_config() -> bool:
             fields = [
                 ("workspace", "Workspace directory"),
                 ("stt_language", "STT language (e.g. ko)"),
+                ("stt_mode", "STT mode (api or local)"),
+                ("stt_local_model", "Local Whisper model (e.g. base, large-v3)"),
                 ("llm_language", "LLM language (e.g. korean)"),
                 ("stt_api_provider", "STT API provider"),
                 ("google_project_id", "Google Cloud project ID (for google-chirp3)"),
-                ("google_location", "Google Cloud location (default: us-central1)"),
+                ("google_location", "Google Cloud location (default: us)"),
                 ("stt_api_key", "STT API key"),
                 ("gemini_api_key", "Gemini API key"),
                 ("audio_format", "Audio format (wav or mp3)"),
@@ -398,6 +439,18 @@ def _menu_config() -> bool:
                         continue
                     if value == "__clear__":
                         value = ""
+                elif selected_key == "stt_mode":
+                    value = _select_stt_mode(data.get(selected_key, "") or "")
+                    if value in (None, "__cancel__"):
+                        continue
+                    if value == "__clear__":
+                        value = ""
+                elif selected_key == "stt_local_model":
+                    value = _select_stt_local_model(data.get(selected_key, "") or "")
+                    if value in (None, "__cancel__"):
+                        continue
+                    if value == "__clear__":
+                        value = ""
                 else:
                     prompt = next(label for k, label in fields if k == selected_key)
                     value = _ask(
@@ -412,6 +465,9 @@ def _menu_config() -> bool:
                 if value:
                     if selected_key == "audio_format" and value not in ("wav", "mp3"):
                         typer.echo("Invalid audio format. Must be 'wav' or 'mp3'. Skipping.")
+                        continue
+                    if selected_key == "stt_mode" and value not in ("api", "local"):
+                        typer.echo("Invalid STT mode. Must be 'api' or 'local'. Skipping.")
                         continue
                     if selected_key == "workspace":
                         value = str(Path(value).expanduser().resolve())

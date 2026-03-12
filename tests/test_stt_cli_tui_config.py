@@ -1,0 +1,119 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from unittest.mock import patch
+
+from typer.testing import CliRunner
+
+from lecture_auto.cli import _build_service, app
+from lecture_auto.tui import _menu_config
+
+
+runner = CliRunner()
+
+
+def _config_path(home_dir: Path) -> Path:
+    return home_dir / ".lecture_auto" / "config.json"
+
+
+def test_cli_config_set_persists_stt_mode_and_local_model(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    result = runner.invoke(
+        app,
+        ["config", "set", "--stt-mode", "local", "--stt-local-model", "large-v3"],
+    )
+
+    assert result.exit_code == 0
+    config_data = json.loads(_config_path(tmp_path).read_text(encoding="utf-8"))
+    assert config_data["stt_mode"] == "local"
+    assert config_data["stt_local_model"] == "large-v3"
+
+
+def test_cli_config_set_rejects_invalid_stt_mode(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    result = runner.invoke(app, ["config", "set", "--stt-mode", "invalid"])
+
+    assert result.exit_code == 1
+    assert "STT mode must be 'api' or 'local'." in (result.output or "")
+
+
+def test_build_service_loads_stt_mode_and_local_model_from_config(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("STT_MODE", raising=False)
+    monkeypatch.delenv("STT_LOCAL_MODEL", raising=False)
+
+    config_path = _config_path(tmp_path)
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(
+        json.dumps({"stt_mode": "local", "stt_local_model": "medium"}),
+        encoding="utf-8",
+    )
+
+    service = _build_service()
+
+    assert service.stt_config.mode == "local"
+    assert service.stt_config.local_model_name == "medium"
+
+
+def test_build_service_env_overrides_config_for_stt_mode_and_model(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("STT_MODE", "api")
+    monkeypatch.setenv("STT_LOCAL_MODEL", "base")
+
+    config_path = _config_path(tmp_path)
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(
+        json.dumps({"stt_mode": "local", "stt_local_model": "large-v3"}),
+        encoding="utf-8",
+    )
+
+    service = _build_service()
+
+    assert service.stt_config.mode == "api"
+    assert service.stt_config.local_model_name == "base"
+
+
+def test_tui_menu_config_saves_stt_mode(monkeypatch) -> None:
+    saved: dict = {}
+
+    def _save(data: dict) -> None:
+        saved.clear()
+        saved.update(data)
+
+    with patch("lecture_auto.tui._load_config", return_value={}):
+        with patch("lecture_auto.tui._save_config", side_effect=_save):
+            with patch(
+                "lecture_auto.tui._select",
+                side_effect=["set", "stt_mode", "__save__", "__back__"],
+            ):
+                with patch("lecture_auto.tui._select_stt_mode", return_value="local"):
+                    changed = _menu_config()
+
+    assert changed is True
+    assert saved["stt_mode"] == "local"
+
+
+def test_tui_menu_config_saves_stt_local_model(monkeypatch) -> None:
+    saved: dict = {}
+
+    def _save(data: dict) -> None:
+        saved.clear()
+        saved.update(data)
+
+    with patch("lecture_auto.tui._load_config", return_value={}):
+        with patch("lecture_auto.tui._save_config", side_effect=_save):
+            with patch(
+                "lecture_auto.tui._select",
+                side_effect=["set", "stt_local_model", "__save__", "__back__"],
+            ):
+                with patch(
+                    "lecture_auto.tui._select_stt_local_model",
+                    return_value="distil-large-v3",
+                ):
+                    changed = _menu_config()
+
+    assert changed is True
+    assert saved["stt_local_model"] == "distil-large-v3"

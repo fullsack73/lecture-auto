@@ -29,7 +29,6 @@ _BASE_URL = "https://speech.googleapis.com/v2"
 _POLL_INTERVAL_SECONDS = 2
 _POLL_TIMEOUT_SECONDS = 300
 _LOCAL_CHUNK_SECONDS = 50
-_RECOGNIZER_ID = "lecture-auto-chirp3"
 
 
 class GoogleChirp3STTRuntimeAdapter:
@@ -59,17 +58,9 @@ class GoogleChirp3STTRuntimeAdapter:
                 "gcloud auth application-default login"
             )
         self._project_id = config.google_project_id
-        requested_location = (config.google_location or "us-central1").strip() or "us-central1"
-        if requested_location == "global":
-            logger.warning(
-                "google-chirp3 does not run on global in this adapter path; "
-                "overriding location to us-central1."
-            )
-            requested_location = "us-central1"
-        self._location = requested_location
-        self._language = config.language
+        self._location = self._normalize_location(config.google_location)
+        self._language = self._normalize_language(config.language)
         self._diarization = config.diarization
-        self._cached_recognizer_url: str | None = None
 
     # ------------------------------------------------------------------
     # Public API
@@ -117,7 +108,7 @@ class GoogleChirp3STTRuntimeAdapter:
 
                     file_size = len(audio_bytes)
                     if file_size > _SYNC_SIZE_THRESHOLD_BYTES:
-                        logger.info(
+                        logger.warning(
                             "Local audio is %.1f MB; using chunked synchronous "
                             "recognition for Google Chirp 3.",
                             file_size / (1024 * 1024),
@@ -156,79 +147,26 @@ class GoogleChirp3STTRuntimeAdapter:
             features["enableWordTimeOffsets"] = True
 
         return {
+            "model": "chirp_3",
             "languageCodes": [self._language],
             "autoDecodingConfig": {},
             "features": features,
         }
 
+    def _api_root(self) -> str:
+        if self._location == "global":
+            return _BASE_URL
+        return f"https://{self._location}-speech.googleapis.com/v2"
+
     def _base_recognizer_url(self) -> str:
         return (
-            f"{_BASE_URL}/projects/{self._project_id}"
-            f"/locations/{self._location}/recognizers/{_RECOGNIZER_ID}"
+            f"{self._api_root()}/projects/{self._project_id}"
+            f"/locations/{self._location}/recognizers/_"
         )
 
     def _resolve_recognizer_url(self, client: Any) -> str:
-        """Return the recognizer base URL, auto-creating the recognizer if absent."""
-        if self._cached_recognizer_url:
-            return self._cached_recognizer_url
-        url = self._get_or_create_recognizer(client)
-        self._cached_recognizer_url = url
-        return url
-
-    def _get_or_create_recognizer(self, client: Any) -> str:
-        """Fetch the named recognizer, creating it in the configured location if missing."""
-        recognizer_url = self._base_recognizer_url()
-        resp = client.get(recognizer_url, **self._auth_kwargs())
-        if resp.status_code == 200:
-            logger.info("Using existing recognizer: %s", recognizer_url)
-            return recognizer_url
-        if resp.status_code != 404:
-            self._check_response_status(resp)
-
-        logger.info(
-            "Recognizer not found; creating '%s' in location '%s'.",
-            _RECOGNIZER_ID,
-            self._location,
-        )
-        parent = (
-            f"{_BASE_URL}/projects/{self._project_id}"
-            f"/locations/{self._location}/recognizers"
-        )
-        body = {
-            "model": "chirp_3",
-            "displayName": "lecture-auto Chirp 3",
-        }
-        create_resp = client.post(
-            parent,
-            json=body,
-            params={"recognizerId": _RECOGNIZER_ID},
-            **self._auth_kwargs(),
-        )
-        self._check_response_status(create_resp)
-        operation_name = (create_resp.json().get("name") or "").strip()
-        if not operation_name:
-            raise STTConfigError(
-                "Recognizer creation did not return an operation name."
-            )
-
-        poll_url = f"https://speech.googleapis.com/v2/{operation_name}"
-        deadline = time.monotonic() + 120
-        while time.monotonic() < deadline:
-            poll = client.get(poll_url, **self._auth_kwargs())
-            self._check_response_status(poll)
-            data = poll.json()
-            if data.get("done"):
-                if "error" in data:
-                    raise STTConfigError(
-                        f"Recognizer creation failed: {data['error'].get('message', data['error'])}"
-                    )
-                logger.info("Recognizer created: %s", recognizer_url)
-                return recognizer_url
-            time.sleep(2)
-
-        raise STTTransientNetworkError(
-            "Timed out waiting for recognizer creation (120s)."
-        )
+        del client
+        return self._base_recognizer_url()
 
     def _recognize_sync(
         self,
@@ -278,7 +216,7 @@ class GoogleChirp3STTRuntimeAdapter:
         # operation_name is like
         # "projects/.../locations/global/operations/<id>"
         # The v2 poll endpoint is: GET /v2/{operation_name}
-        poll_url = f"https://speech.googleapis.com/v2/{operation_name}"
+        poll_url = f"{self._api_root()}/{operation_name}"
         deadline = time.monotonic() + _POLL_TIMEOUT_SECONDS
 
         while time.monotonic() < deadline:
@@ -326,9 +264,19 @@ class GoogleChirp3STTRuntimeAdapter:
         if not chunks:
             raise STTConfigError("No audio chunks were produced from local file.")
 
+        logger.warning(
+            "Google Chirp 3 chunked transcription started: %d chunks.",
+            len(chunks),
+        )
+
         transcript_parts: list[str] = []
         try:
-            for chunk_path in chunks:
+            for idx, chunk_path in enumerate(chunks, start=1):
+                logger.warning(
+                    "Google Chirp 3 transcribing chunk %d/%d...",
+                    idx,
+                    len(chunks),
+                )
                 with open(chunk_path, "rb") as f:
                     chunk_bytes = f.read()
                 chunk_b64 = base64.b64encode(chunk_bytes).decode("ascii")
@@ -341,6 +289,7 @@ class GoogleChirp3STTRuntimeAdapter:
                 chunk_result = self._parse_response(chunk_response)
                 if chunk_result.transcript_text:
                     transcript_parts.append(chunk_result.transcript_text)
+            logger.warning("Google Chirp 3 chunked transcription completed.")
         finally:
             for chunk_path in chunks:
                 try:
@@ -478,6 +427,46 @@ class GoogleChirp3STTRuntimeAdapter:
         if token and token.strip():
             return token.strip()
         return None
+
+    @staticmethod
+    def _normalize_location(location: str | None) -> str:
+        requested = (location or "us").strip() or "us"
+        aliases = {
+            "global": "us",
+            "us-central1": "us",
+        }
+        normalized = aliases.get(requested, requested)
+        if normalized != requested:
+            logger.warning(
+                "google-chirp3 location '%s' is remapped to '%s' to match the documented regional endpoint.",
+                requested,
+                normalized,
+            )
+        return normalized
+
+    @staticmethod
+    def _normalize_language(language: str | None) -> str | None:
+        if language is None:
+            return None
+        requested = language.strip()
+        if not requested:
+            return requested
+        if requested == "auto" or "-" in requested:
+            return requested
+
+        aliases = {
+            "ko": "ko-KR",
+            "en": "en-US",
+            "ja": "ja-JP",
+        }
+        normalized = aliases.get(requested, requested)
+        if normalized != requested:
+            logger.warning(
+                "google-chirp3 language '%s' is remapped to '%s'.",
+                requested,
+                normalized,
+            )
+        return normalized
 
     def _parse_response(self, data: dict[str, Any]) -> STTResult:
         """Parse a Google STT v2 recognizeResponse into STTResult."""
