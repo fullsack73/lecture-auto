@@ -13,12 +13,14 @@ from lecture_auto.llm_config import LLMConfig
 from lecture_auto.session_metadata_store import SessionMetadataStore
 from lecture_auto.session_service import SessionCommandError, SessionService
 from lecture_auto.stt_config import STTConfig
+from lecture_auto.library_service import LibraryService
 
 app = typer.Typer(help="Lecture automation CLI", invoke_without_command=True)
 session_app = typer.Typer(help="Session commands")
 capture_app = typer.Typer(help="Capture commands")
 transcription_app = typer.Typer(help="Transcription commands")
 config_app = typer.Typer(help="Configuration commands")
+library_app = typer.Typer(help="Library commands")
 
 
 def _get_global_config_path() -> Path:
@@ -420,10 +422,79 @@ def config_show() -> None:
         typer.echo("No global configuration found.")
 
 
+@library_app.command("list")
+def library_list(
+    from_date: str | None = typer.Option(None, "--from", help="Start date (YYYY-MM-DD)"),
+    to_date: str | None = typer.Option(None, "--to", help="End date (YYYY-MM-DD)"),
+    status: str | None = typer.Option(None, "--status", help="Filter by status"),
+    sort: str | None = typer.Option(None, "--sort", help="Sort by 'recent'"),
+    as_json: bool = typer.Option(False, "--json", help="Render output as JSON"),
+) -> None:
+    store = SessionMetadataStore(metadata_file=(Path(os.environ.get("LECTURE_AUTO_WORKSPACE") or Path.home() / ".lecture_auto") / "metadata" / "sessions.json"))
+    library_service = LibraryService(store=store, base_dir=Path(os.environ.get("LECTURE_AUTO_WORKSPACE") or Path.home() / ".lecture_auto"))
+    _run_or_exit(
+        "library list",
+        as_json,
+        lambda: library_service.library_list(
+            from_date=from_date,
+            to_date=to_date,
+            status_filter=status,
+            sort_recent=(sort == "recent"),
+        ),
+    )
+
+
+@library_app.command("search")
+def library_search(
+    query: str = typer.Argument(..., help="Search query"),
+    from_date: str | None = typer.Option(None, "--from", help="Start date (YYYY-MM-DD)"),
+    to_date: str | None = typer.Option(None, "--to", help="End date (YYYY-MM-DD)"),
+    status: str | None = typer.Option(None, "--status", help="Filter by status"),
+    sort: str | None = typer.Option(None, "--sort", help="Sort by 'recent'"),
+    as_json: bool = typer.Option(False, "--json", help="Render output as JSON"),
+) -> None:
+    workspace = Path(os.environ.get("LECTURE_AUTO_WORKSPACE") or Path.home() / ".lecture_auto")
+    store = SessionMetadataStore(metadata_file=workspace / "metadata" / "sessions.json")
+    library_service = LibraryService(store=store, base_dir=workspace)
+    _run_or_exit(
+        "library search",
+        as_json,
+        lambda: library_service.library_search(
+            query=query,
+            from_date=from_date,
+            to_date=to_date,
+            status_filter=status,
+            sort_recent=(sort == "recent"),
+        ),
+    )
+
+
+@library_app.command("open")
+def library_open(
+    session_id: str = typer.Argument(..., help="Session ID"),
+    transcript: bool = typer.Option(False, "--transcript", help="Open transcripts folder"),
+    recordings: bool = typer.Option(False, "--recordings", help="Open recordings folder"),
+    as_json: bool = typer.Option(False, "--json", help="Render output as JSON"),
+) -> None:
+    workspace = Path(os.environ.get("LECTURE_AUTO_WORKSPACE") or Path.home() / ".lecture_auto")
+    store = SessionMetadataStore(metadata_file=workspace / "metadata" / "sessions.json")
+    library_service = LibraryService(store=store, base_dir=workspace)
+    _run_or_exit(
+        "library open",
+        as_json,
+        lambda: library_service.library_open(
+            session_id=session_id,
+            open_transcript=transcript,
+            open_recordings=recordings,
+        ),
+    )
+
+
 app.add_typer(session_app, name="session")
 app.add_typer(capture_app, name="capture")
 app.add_typer(transcription_app, name="transcription")
 app.add_typer(config_app, name="config")
+app.add_typer(library_app, name="library")
 
 
 def main() -> None:

@@ -107,11 +107,21 @@ class GoogleChirp3STTRuntimeAdapter:
                         raise STTConfigError(f"Audio file not found: {audio_path}") from exc
 
                     file_size = len(audio_bytes)
-                    if file_size > _SYNC_SIZE_THRESHOLD_BYTES:
+                    duration_seconds = self._probe_audio_duration(audio_path)
+                    needs_chunking = (
+                        file_size > _SYNC_SIZE_THRESHOLD_BYTES
+                        or (duration_seconds is not None and duration_seconds > _LOCAL_CHUNK_SECONDS)
+                    )
+                    if needs_chunking:
+                        reason = (
+                            f"{file_size / (1024 * 1024):.1f} MB"
+                            if file_size > _SYNC_SIZE_THRESHOLD_BYTES
+                            else f"{duration_seconds:.0f}s > {_LOCAL_CHUNK_SECONDS}s limit"
+                        )
                         logger.warning(
-                            "Local audio is %.1f MB; using chunked synchronous "
+                            "Local audio (%s); using chunked synchronous "
                             "recognition for Google Chirp 3.",
-                            file_size / (1024 * 1024),
+                            reason,
                         )
                         return self._transcribe_large_local_file(
                             client=client,
@@ -304,6 +314,27 @@ class GoogleChirp3STTRuntimeAdapter:
             language=self._language,
             segments=[],
         )
+
+    def _probe_audio_duration(self, audio_path: str) -> float | None:
+        """Return audio duration in seconds via ffprobe, or None on failure."""
+        try:
+            result = subprocess.run(
+                [
+                    "ffprobe",
+                    "-v", "error",
+                    "-show_entries", "format=duration",
+                    "-of", "default=noprint_wrappers=1:nokey=1",
+                    audio_path,
+                ],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            if result.returncode == 0:
+                return float(result.stdout.decode().strip())
+        except (FileNotFoundError, ValueError):
+            pass
+        return None
 
     def _split_audio_into_chunks(self, audio_path: str) -> list[str]:
         """Split local audio into <= ~60s WAV chunks using ffmpeg."""

@@ -66,6 +66,14 @@ def format_command_output(result: CommandResult, *, as_json: bool = False) -> st
     if result.command == "summarize":
         return _render_summarize(result.payload, result.message)
 
+    if result.command == "library list":
+        return _render_library_list(result.payload)
+
+    if result.command == "library search":
+        return _render_library_search(result.payload)
+
+    if result.command == "library open":
+        return _render_library_open(result.payload, result.message)
     return result.message
 
 
@@ -223,3 +231,47 @@ def _render_summarize(payload: dict[str, Any], message: str) -> str:
         f"- Note Path: {payload.get('note_file_path')}\n"
         "- Next: Re-run summarize with --template to regenerate"
     )
+
+
+def _render_library_list(payload: dict[str, Any]) -> str:
+    sessions = payload.get("sessions", [])
+    lines = [f"Library List ({len(sessions)} total)"]
+    if not sessions:
+        lines.append("- No sessions found.")
+        lines.append("- Next: Run 'session create' to create your first session")
+        return "\n".join(lines)
+
+    for row in sessions:
+        title = row.get("title") or "(pending title)"
+        course = row.get("course") or "(pending course)"
+        lines.append(
+            f"- {row['date']} | {row['session_id']} | {row['status']} | {course} | {title}"
+        )
+    lines.append("- Next: Run 'library search <query>' to find sessions or 'library open <id>' to view files")
+    return "\n".join(lines)
+
+
+def _render_library_search(payload: dict[str, Any]) -> str:
+    sessions = payload.get("sessions", [])
+    lines = [f"Search Results ({len(sessions)} matching)"]
+    if not sessions:
+        lines.append("- No matching sessions found.")
+        lines.append("- Next: Try a different search query")
+        return "\n".join(lines)
+
+    for row in sessions:
+        title = row.get("title") or "(pending title)"
+        course = row.get("course") or "(pending course)"
+        lines.append(
+            f"- {row['date']} | {row['session_id']} | {row['status']} | {course} | {title}"
+        )
+    lines.append("- Next: Run 'library open <session_id>' to view files")
+    return "\n".join(lines)
+
+
+def _render_library_open(payload: dict[str, Any], message: str) -> str:
+    exists = payload.get("exists", False)
+    opened_path = payload.get("opened_path", "")
+    if not exists:
+        return f"Folder Not Found\n" f"- Path: {opened_path}\n" f"- {message}"
+    return f"Opened Folder\n" f"- Path: {opened_path}\n" f"- {message}"

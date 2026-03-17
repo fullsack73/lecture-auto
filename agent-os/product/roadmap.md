@@ -6,7 +6,7 @@
 4. [x] Transcript File Review and Edit Workflow — Provide command-driven transcript review where users can open, search, and edit transcript files, then save revised versions locally. Ensure versioned transcript states (raw vs edited) are testable and recoverable from filesystem artifacts. `[M]`
 5. [x] LLM-Based Transcript Refinement — Add optional transcript cleanup that improves spacing, wording, and typo correction while preserving lecture meaning. Save before/after transcript outputs as separate local files so users can compare and choose the final input for summarization. `[M]`
 6. [x] Summary Note Generation with Templates — Let users generate lecture notes from selected transcript versions using predefined or custom output formats. Implement end-to-end generation, preview, save, and regenerate flows through CLI commands with final output stored as `.md` files. `[L]`
-7. [ ] Local Notes Library and Search Commands — Create a local notes library structure where students can list lectures, search transcript/note content, and reopen related audio and summaries from terminal commands. Include filtering and recent-activity metadata to reduce exam-prep time. `[M]`
+7. [x] Local Notes Library and Search Commands — Create a local notes library structure where students can list lectures, search transcript/note content, and reopen related audio and summaries from terminal commands. Include filtering and recent-activity metadata to reduce exam-prep time. `[M]`
 8. [ ] Markdown Export and Share Package — Enable users to package transcripts and summaries into share-ready local files (Markdown/TXT/PDF) for classmates. Validate export quality and failure handling across command execution and local file generation paths. `[S]`
 
 > Notes
