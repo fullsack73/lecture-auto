@@ -58,6 +58,8 @@ def _build_service() -> SessionService:
     config_stt_mode = None
     config_stt_local_model = None
     config_gemini_api_key = None
+    config_llm_model_name = None
+    config_llm_thinking_level = None
     config_audio_format = None
     config_google_project_id = None
     config_google_location = None
@@ -75,6 +77,8 @@ def _build_service() -> SessionService:
                 config_stt_mode = config_data.get("stt_mode")
                 config_stt_local_model = config_data.get("stt_local_model")
                 config_gemini_api_key = config_data.get("gemini_api_key")
+                config_llm_model_name = config_data.get("llm_model_name")
+                config_llm_thinking_level = config_data.get("llm_thinking_level")
                 config_audio_format = config_data.get("audio_format")
                 config_google_project_id = config_data.get("google_project_id")
                 config_google_location = config_data.get("google_location")
@@ -96,7 +100,8 @@ def _build_service() -> SessionService:
             llm_adapter = GeminiLLMAdapter(
                 LLMConfig(
                     api_key=api_key,
-                    model_name=os.environ.get("LLM_MODEL", "gemini-3-flash-preview"),
+                    model_name=os.environ.get("LLM_MODEL", "gemini-3.1-flash-lite-preview"),
+                    thinking_level=os.environ.get("LLM_THINKING_LEVEL", "medium"),
                     language=config_llm_language,
                 )
             )
@@ -253,6 +258,8 @@ def config_set(
     stt_mode: str | None = typer.Option(None, "--stt-mode", help="STT mode (api or local)"),
     stt_local_model: str | None = typer.Option(None, "--stt-local-model", help="Local Whisper model name (e.g. base, medium, large-v3)"),
     gemini_api_key: str | None = typer.Option(None, "--gemini-api-key", help="Gemini API key for LLM"),
+    llm_model_name: str | None = typer.Option(None, "--llm-model", help="LLM model name (gemini-3.1-flash-lite-preview or gemini-3.1-pro-preview)"),
+    llm_thinking_level: str | None = typer.Option(None, "--llm-thinking-level", help="LLM thinking level (minimal, low, medium, high)"),
     audio_format: str | None = typer.Option(None, "--audio-format", help="Default audio format for recordings (wav or mp3)"),
     google_project_id: str | None = typer.Option(None, "--google-project-id", help="Google Cloud project ID (required for google-chirp3 STT provider)"),
 ) -> None:
@@ -314,6 +321,32 @@ def config_set(
     if gemini_api_key is not None:
         config_data["gemini_api_key"] = gemini_api_key
         typer.echo(f"Global Gemini API key configured.")
+        updated = True
+
+    if llm_model_name is not None:
+        normalized_model = llm_model_name.strip()
+        valid_models = {"gemini-3.1-flash-lite-preview", "gemini-3.1-pro-preview"}
+        if normalized_model not in valid_models:
+            typer.echo(
+                f"LLM model must be one of {valid_models}.",
+                err=True,
+            )
+            raise typer.Exit(code=1)
+        config_data["llm_model_name"] = normalized_model
+        typer.echo(f"Global LLM model set to: {config_data['llm_model_name']}")
+        updated = True
+
+    if llm_thinking_level is not None:
+        normalized_level = llm_thinking_level.strip().lower()
+        valid_levels = {"minimal", "low", "medium", "high"}
+        if normalized_level not in valid_levels:
+            typer.echo(
+                f"LLM thinking level must be one of {valid_levels}.",
+                err=True,
+            )
+            raise typer.Exit(code=1)
+        config_data["llm_thinking_level"] = normalized_level
+        typer.echo(f"Global LLM thinking level set to: {config_data['llm_thinking_level']}")
         updated = True
 
     if audio_format is not None:

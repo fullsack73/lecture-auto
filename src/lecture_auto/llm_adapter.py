@@ -72,9 +72,11 @@ class GeminiLLMAdapter:
 
         try:
             from google.api_core.exceptions import PermissionDenied, DeadlineExceeded
+            from google.genai import types
         except ImportError:
             PermissionDenied = Exception
             DeadlineExceeded = Exception
+            types = None
 
         topic_prompt = f"The overall topic or subject is '{context_topic}'. " if context_topic else ""
         lang_prompt = f"Output your response entirely in {self.config.language}. " if self.config.language else ""
@@ -103,12 +105,16 @@ class GeminiLLMAdapter:
                 
                 prompt = f"Refine the following text:\n{chunk}"
 
-                config = {"system_instruction": system_instructions}
+                config_dict = {"system_instruction": system_instructions}
+                if types:
+                    config_dict["thinking_config"] = types.ThinkingConfig(
+                        thinking_level=self.config.thinking_level
+                    )
 
                 response = self.client.models.generate_content(
                     model=self._normalize_model_name(self.config.model_name),
                     contents=prompt,
-                    config=config,
+                    config=config_dict,
                 )
                 text = (getattr(response, "text", "") or "").strip()
                 refined_chunks.append(text)
@@ -144,9 +150,11 @@ class GeminiLLMAdapter:
 
         try:
             from google.api_core.exceptions import PermissionDenied, DeadlineExceeded
+            from google.genai import types
         except ImportError:
             PermissionDenied = Exception
             DeadlineExceeded = Exception
+            types = None
 
         topic_prompt = f"The lecture topic is '{context_topic}'. " if context_topic else ""
         lang_prompt = f"Output your response entirely in {self.config.language}. " if self.config.language else ""
@@ -164,12 +172,16 @@ class GeminiLLMAdapter:
                 f"Transcript:\n{transcript}\n"
             )
             
-            config = {"system_instruction": system_instructions}
+            config_dict = {"system_instruction": system_instructions}
+            if types:
+                config_dict["thinking_config"] = types.ThinkingConfig(
+                    thinking_level=self.config.thinking_level
+                )
 
             response = self.client.models.generate_content(
                 model=self._normalize_model_name(self.config.model_name),
                 contents=prompt,
-                config=config,
+                config=config_dict,
             )
             text = (getattr(response, "text", "") or "").strip()
             return text

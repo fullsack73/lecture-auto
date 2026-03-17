@@ -119,6 +119,56 @@ def _select_stt_local_model(current: str = "") -> str | None:
     return manual
 
 
+def _select_llm_model(current: str = "") -> str | None:
+    """Select an LLM model for persisted config."""
+    choices = [
+        questionary.Choice(
+            title="Flash-Lite (cheaper, faster)",
+            value="gemini-3.1-flash-lite-preview",
+            checked=current == "gemini-3.1-flash-lite-preview",
+        ),
+        questionary.Choice(
+            title="Pro (more capable)",
+            value="gemini-3.1-pro-preview",
+            checked=current == "gemini-3.1-pro-preview",
+        ),
+        questionary.Separator(),
+        questionary.Choice(title="Clear value", value="__clear__"),
+        questionary.Choice(title="Cancel", value="__cancel__"),
+    ]
+    return _select("Select LLM model", choices)
+
+
+def _select_llm_thinking_level(current: str = "") -> str | None:
+    """Select LLM thinking level for persisted config."""
+    choices = [
+        questionary.Choice(
+            title="Minimal (fastest)",
+            value="minimal",
+            checked=current == "minimal",
+        ),
+        questionary.Choice(
+            title="Low (faster, good for simple tasks)",
+            value="low",
+            checked=current == "low",
+        ),
+        questionary.Choice(
+            title="Medium (balanced)",
+            value="medium",
+            checked=current == "medium",
+        ),
+        questionary.Choice(
+            title="High (most capable, slower)",
+            value="high",
+            checked=current == "high",
+        ),
+        questionary.Separator(),
+        questionary.Choice(title="Clear value", value="__clear__"),
+        questionary.Choice(title="Cancel", value="__cancel__"),
+    ]
+    return _select("Select LLM thinking level", choices)
+
+
 def _select_session(service, prompt: str = "Select a session") -> str | None:
     """Show session list and let user pick one by title / id."""
     try:
@@ -405,6 +455,8 @@ def _menu_config() -> bool:
                 ("stt_mode", "STT mode (api or local)"),
                 ("stt_local_model", "Local Whisper model (e.g. base, large-v3)"),
                 ("llm_language", "LLM language (e.g. korean)"),
+                ("llm_model_name", "LLM model"),
+                ("llm_thinking_level", "LLM thinking level"),
                 ("stt_api_provider", "STT API provider"),
                 ("google_project_id", "Google Cloud project ID (for google-chirp3)"),
                 ("google_location", "Google Cloud location (default: us)"),
@@ -447,6 +499,18 @@ def _menu_config() -> bool:
                         value = ""
                 elif selected_key == "stt_local_model":
                     value = _select_stt_local_model(data.get(selected_key, "") or "")
+                    if value in (None, "__cancel__"):
+                        continue
+                    if value == "__clear__":
+                        value = ""
+                elif selected_key == "llm_model_name":
+                    value = _select_llm_model(data.get(selected_key, "") or "")
+                    if value in (None, "__cancel__"):
+                        continue
+                    if value == "__clear__":
+                        value = ""
+                elif selected_key == "llm_thinking_level":
+                    value = _select_llm_thinking_level(data.get(selected_key, "") or "")
                     if value in (None, "__cancel__"):
                         continue
                     if value == "__clear__":
