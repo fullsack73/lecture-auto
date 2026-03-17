@@ -246,14 +246,10 @@ def _menu_session(service) -> None:
                 _echo_error("session history", exc)
 
         elif choice == "detail":
-            session_id = _select_session(service, "Select session to view")
+            session_id = _select_session(service, "Select session to view / edit")
             if session_id is None:
                 continue
-            try:
-                result = service.session_detail(session_id=session_id)
-                _echo_result(result)
-            except SessionCommandError as exc:
-                _echo_error("session detail", exc)
+            _menu_session_detail(service, session_id)
 
         elif choice == "delete":
             session_id = _select_session(service, "Select session to delete")
@@ -292,6 +288,101 @@ def _menu_session(service) -> None:
                 _echo_error("session create", exc)
 
         typer.echo()  # breathing room after each action
+
+
+def _menu_session_detail(service, session_id: str) -> None:
+    """Per-session sub-menu: view detail or edit metadata."""
+    while True:
+        choice = _select(
+            f"Session: {session_id}",
+            [
+                questionary.Choice("📄  View detail", "view"),
+                questionary.Choice("✏   Edit metadata", "edit"),
+                SEPARATOR,
+                questionary.Choice("← Back", "__back__"),
+            ],
+        )
+
+        if choice in (None, "__back__"):
+            return
+
+        if choice == "view":
+            try:
+                result = service.session_detail(session_id=session_id)
+                _echo_result(result)
+            except SessionCommandError as exc:
+                _echo_error("session detail", exc)
+
+        elif choice == "edit":
+            new_id = _edit_session_metadata(service, session_id)
+            if new_id and new_id != session_id:
+                # Session was renamed — update the local reference and continue
+                session_id = new_id
+
+        typer.echo()
+
+
+def _edit_session_metadata(service, session_id: str) -> str:
+    """Edit title/course/date/session_id for a session.
+
+    Returns the (possibly new) session_id after saving.
+    """
+    EDIT_FIELDS = [
+        ("new_session_id", "Session ID"),
+        ("date",           "Date (YYYY-MM-DD)"),
+        ("title",          "Title"),
+        ("course",         "Course"),
+    ]
+
+    pending: dict = {}
+
+    while True:
+        # Always load fresh so we can show current-or-pending values
+        try:
+            current = service.session_detail(session_id=session_id).payload
+        except SessionCommandError as exc:
+            _echo_error("session detail", exc)
+            return session_id
+
+        choices = []
+        for key, label in EDIT_FIELDS:
+            if key == "new_session_id":
+                raw = pending.get(key, current.get("session_id", ""))
+            else:
+                raw = pending.get(key, current.get(key) or "")
+            display = f"[{raw}] {label}" if raw else f"[ ] {label}"
+            choices.append(questionary.Choice(title=display, value=key))
+
+        choices.append(SEPARATOR)
+        choices.append(questionary.Choice(title="💾  Save changes", value="__save__"))
+        choices.append(questionary.Choice(title="✖  Cancel", value="__cancel__"))
+
+        selected = _select("Select a field to edit", choices)
+
+        if selected in (None, "__cancel__"):
+            typer.echo("Edit cancelled.")
+            return session_id
+
+        if selected == "__save__":
+            if not pending:
+                typer.echo("No changes to save.")
+                return session_id
+            try:
+                result = service.session_update_metadata(session_id=session_id, **pending)
+                _echo_result(result)
+                return result.payload["session_id"]
+            except SessionCommandError as exc:
+                _echo_error("session update", exc)
+                return session_id
+
+        # Ask for new value
+        if selected == "new_session_id":
+            current_val = pending.get("new_session_id", current.get("session_id", ""))
+        else:
+            current_val = pending.get(selected, current.get(selected) or "")
+
+        new_val = _ask(EDIT_FIELDS[[k for k, _ in EDIT_FIELDS].index(selected)][1], default=current_val)
+        pending[selected] = new_val  # empty string means clear (service normalises)
 
 
 def _menu_capture(service) -> None:

@@ -183,6 +183,41 @@ def session_delete_cmd(
     _run_or_exit("session delete", as_json, lambda: service.session_delete(session_id=session_id))
 
 
+@session_app.command("update")
+def session_update_cmd(
+    session_id: str = typer.Argument(..., help="Session id to update"),
+    new_id: str | None = typer.Option(None, "--new-id", help="New session ID (rename)"),
+    title: str | None = typer.Option(None, "--title", help="New title (empty string to clear)"),
+    course: str | None = typer.Option(None, "--course", help="New course (empty string to clear)"),
+    date: str | None = typer.Option(None, "--date", help="New date YYYY-MM-DD"),
+    as_json: bool = typer.Option(False, "--json", help="Render output as JSON"),
+) -> None:
+    from lecture_auto.session_service import _UNSET  # type: ignore[attr-defined]
+
+    if new_id is None and title is None and course is None and date is None:
+        typer.echo(
+            "Error: At least one of --new-id, --title, --course, or --date must be provided."
+        )
+        raise typer.Exit(code=1)
+
+    service = _build_service()
+    kwargs: dict = {}
+    if new_id is not None:
+        kwargs["new_session_id"] = new_id
+    if title is not None:
+        kwargs["title"] = title
+    if course is not None:
+        kwargs["course"] = course
+    if date is not None:
+        kwargs["date"] = date
+
+    _run_or_exit(
+        "session update",
+        as_json,
+        lambda: service.session_update_metadata(session_id=session_id, **kwargs),
+    )
+
+
 @capture_app.command("start")
 def capture_start(
     session_id: str = typer.Argument(..., help="Session id"),

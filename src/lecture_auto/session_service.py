@@ -59,6 +59,9 @@ MAX_IMPORT_RETRIES = 3
 MAX_STT_API_RETRIES = 2
 DEFAULT_NOTE_TEMPLATE_NAME = "bullet-summary"
 
+# Sentinel used by session_update_metadata to distinguish "not provided" from explicit None
+_UNSET = object()
+
 
 class SessionCommandError(RuntimeError):
     def __init__(self, code: str, message: str, guidance: str, exit_code: int) -> None:
@@ -237,6 +240,99 @@ class SessionService:
             command="session detail",
             payload=session,
             message=f"Loaded details for session '{session_id}'.",
+        )
+
+    def session_update_metadata(
+        self,
+        session_id: str,
+        *,
+        new_session_id: str | None = _UNSET,  # type: ignore[assignment]
+        title: str | None = _UNSET,  # type: ignore[assignment]
+        course: str | None = _UNSET,  # type: ignore[assignment]
+        date: str | None = _UNSET,  # type: ignore[assignment]
+    ) -> CommandResult:
+        session = self._require_session(session_id)
+
+        # Apply non-UNSET fields
+        if title is not _UNSET:
+            session["title"] = title or None
+        if course is not _UNSET:
+            session["course"] = course or None
+        if date is not _UNSET:
+            session["date"] = date
+
+        # Recompute naming_pending based on current title/course
+        session["naming_pending"] = not (session.get("title") and session.get("course"))
+
+        session.setdefault("timestamps", {})["updated_at"] = self._utc_now()
+
+        if new_session_id is not _UNSET:
+            new_id = (new_session_id or "").strip()
+            if not new_id:
+                raise SessionCommandError(
+                    code="SESSION_ID_REQUIRED",
+                    message="new_session_id must be a non-empty string.",
+                    guidance="Provide a valid session ID string.",
+                    exit_code=1,
+                )
+            if new_id != session_id and self.store.get_by_session_id(new_id) is not None:
+                raise SessionCommandError(
+                    code="SESSION_ID_CONFLICT",
+                    message=f"Session '{new_id}' already exists.",
+                    guidance="Choose a unique session ID.",
+                    exit_code=1,
+                )
+
+            if new_id != session_id:
+                metadata_root = self.store.metadata_file.parent.parent
+
+                # Collect file paths that need renaming
+                rename_pairs: list[tuple[Path, Path]] = []
+                for field in ("audio_file_path", "transcript_file_path"):
+                    old_rel = session.get(field)
+                    if old_rel and session_id in old_rel:
+                        new_rel = old_rel.replace(session_id, new_id, 1)
+                        old_abs = metadata_root / old_rel
+                        new_abs = metadata_root / new_rel
+                        if old_abs.exists():
+                            rename_pairs.append((old_abs, new_abs))
+                            session[field] = new_rel
+
+                old_edited = metadata_root / f"transcripts/{session_id}-edited.md"
+                if old_edited.exists():
+                    new_edited = metadata_root / f"transcripts/{new_id}-edited.md"
+                    rename_pairs.append((old_edited, new_edited))
+
+                # Perform renames before touching metadata
+                try:
+                    for old_path, new_path in rename_pairs:
+                        new_path.parent.mkdir(parents=True, exist_ok=True)
+                        old_path.rename(new_path)
+                except OSError as exc:
+                    raise SessionCommandError(
+                        code="SESSION_FILE_RENAME_ERROR",
+                        message=f"Failed to rename associated file: {exc}",
+                        guidance="Check filesystem permissions and available disk space.",
+                        exit_code=8,
+                    ) from exc
+
+                # Swap IDs in metadata store
+                session["session_id"] = new_id
+                self.store.delete(session_id)
+                saved = self._persist_or_raise(session)
+                return CommandResult(
+                    command="session update",
+                    payload=saved,
+                    message=(
+                        f"Session '{session_id}' renamed to '{new_id}' and metadata updated."
+                    ),
+                )
+
+        saved = self._persist_or_raise(session)
+        return CommandResult(
+            command="session update",
+            payload=saved,
+            message=f"Session '{session_id}' metadata updated.",
         )
 
     def session_delete(self, session_id: str) -> CommandResult:
