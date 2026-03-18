@@ -14,6 +14,7 @@ import questionary
 import typer
 
 from lecture_auto.cli_output import format_command_error, format_command_output
+from lecture_auto.library_service import LibraryService
 from lecture_auto.session_service import SessionCommandError
 
 # ── Styling ────────────────────────────────────────────────────────────────────
@@ -511,6 +512,117 @@ def _menu_summarize(service) -> None:
     typer.echo()
 
 
+def _build_library_service(service) -> LibraryService:
+    """Build a LibraryService from the SessionService's store and workspace."""
+    base_dir = service.store.metadata_file.parent.parent
+    return LibraryService(store=service.store, base_dir=base_dir)
+
+
+def _menu_library(service) -> None:
+    lib = _build_library_service(service)
+    while True:
+        choice = _select(
+            "Library",
+            [
+                questionary.Choice("📋  List sessions", "list"),
+                questionary.Choice("🔍  Search", "search"),
+                questionary.Choice("📂  Open session folder", "open"),
+                SEPARATOR,
+                questionary.Choice("← Back", "__back__"),
+            ],
+        )
+
+        if choice in (None, "__back__"):
+            return
+
+        if choice == "list":
+            # Optional filters
+            from_date = _ask("From date (YYYY-MM-DD, leave blank to skip)")
+            if from_date is None:
+                continue
+            to_date = _ask("To date (YYYY-MM-DD, leave blank to skip)")
+            if to_date is None:
+                continue
+
+            status_choice = _select(
+                "Filter by status?",
+                [
+                    questionary.Choice("All statuses", ""),
+                    questionary.Choice("idle", "idle"),
+                    questionary.Choice("recording", "recording"),
+                    questionary.Choice("completed", "completed"),
+                    questionary.Choice("failed", "failed"),
+                    questionary.Separator(),
+                    questionary.Choice("Cancel", "__cancel__"),
+                ],
+            )
+            if status_choice in (None, "__cancel__"):
+                continue
+
+            sort_choice = _select(
+                "Sort order?",
+                [
+                    questionary.Choice("Default (by date)", False),
+                    questionary.Choice("Most recent activity first", True),
+                ],
+            )
+            if sort_choice is None:
+                continue
+
+            try:
+                result = lib.library_list(
+                    from_date=from_date.strip() or None,
+                    to_date=to_date.strip() or None,
+                    status_filter=status_choice or None,
+                    sort_recent=sort_choice,
+                )
+                _echo_result(result)
+            except SessionCommandError as exc:
+                _echo_error("library list", exc)
+
+        elif choice == "search":
+            query = _ask("Search query")
+            if not query or not query.strip():
+                typer.echo("Search query cannot be empty.")
+                continue
+
+            try:
+                result = lib.library_search(query=query.strip())
+                _echo_result(result)
+            except SessionCommandError as exc:
+                _echo_error("library search", exc)
+
+        elif choice == "open":
+            session_id = _select_session(service, "Select session to open")
+            if session_id is None:
+                continue
+
+            folder_choice = _select(
+                "Which folder to open?",
+                [
+                    questionary.Choice("📝  Notes", "notes"),
+                    questionary.Choice("📄  Transcripts", "transcripts"),
+                    questionary.Choice("🎙  Recordings", "recordings"),
+                    questionary.Separator(),
+                    questionary.Choice("Cancel", "__cancel__"),
+                ],
+            )
+            if folder_choice in (None, "__cancel__"):
+                continue
+
+            try:
+                result = lib.library_open(
+                    session_id=session_id,
+                    open_transcript=(folder_choice == "transcripts"),
+                    open_recordings=(folder_choice == "recordings"),
+                )
+                _echo_result(result)
+            except SessionCommandError as exc:
+                _echo_error("library open", exc)
+
+        typer.echo()
+
+
 def _menu_config() -> bool:
     """Config menu. Returns True if config was saved (service should be rebuilt)."""
     config_changed = False
@@ -540,29 +652,46 @@ def _menu_config() -> bool:
             updated = False
             selected_key = None
 
-            fields = [
+            # Grouped config fields: (key, label) tuples organised by section.
+            # A plain string entry acts as a section header / separator.
+            field_groups: list[tuple[str, str] | str] = [
+                "── General ──",
                 ("workspace", "Workspace directory"),
-                ("stt_language", "STT language (e.g. ko)"),
+                ("audio_format", "Audio format (wav or mp3)"),
+                "── STT (Speech-to-Text) ──",
                 ("stt_mode", "STT mode (api or local)"),
+                ("stt_language", "STT language (e.g. ko)"),
+                ("stt_api_provider", "STT API provider"),
                 ("stt_local_model", "Local Whisper model (e.g. base, large-v3)"),
+                ("google_project_id", "Google Cloud project ID (for google-chirp3)"),
+                ("google_location", "Google Cloud location (default: us)"),
+                "── LLM (Large Language Model) ──",
                 ("llm_language", "LLM language (e.g. korean)"),
                 ("llm_model_name", "LLM model"),
                 ("llm_thinking_level", "LLM thinking level"),
-                ("stt_api_provider", "STT API provider"),
-                ("google_project_id", "Google Cloud project ID (for google-chirp3)"),
-                ("google_location", "Google Cloud location (default: us)"),
+                "── API Keys ──",
                 ("stt_api_key", "STT API key"),
                 ("gemini_api_key", "Gemini API key"),
-                ("audio_format", "Audio format (wav or mp3)"),
             ]
-            
+
+            # Flat list for lookup — only the actual (key, label) tuples.
+            fields = [item for item in field_groups if isinstance(item, tuple)]
+
             while True:
                 choices = []
-                for key, label in fields:
-                    current = data.get(key, "")
-                    display = f"[{current}] {label}" if current else f"[ ] {label}"
-                    choices.append(questionary.Choice(title=display, value=key))
-                choices.append(SEPARATOR)
+                for item in field_groups:
+                    if isinstance(item, str):
+                        # Section separator
+                        choices.append(questionary.Separator(item))
+                    else:
+                        key, label = item
+                        current = data.get(key, "")
+                        if key in ("stt_api_key", "gemini_api_key") and current:
+                            display = f"[{'*' * min(len(current), 8)}] {label}"
+                        else:
+                            display = f"[{current}] {label}" if current else f"[ ] {label}"
+                        choices.append(questionary.Choice(title=display, value=key))
+                choices.append(questionary.Separator("─" * 30))
                 choices.append(questionary.Choice(title="💾  Save changes", value="__save__"))
                 choices.append(questionary.Choice(title="✖  Cancel", value="__cancel__"))
                 
@@ -662,6 +791,7 @@ def run_tui(service, *, service_factory=None) -> None:
                 questionary.Choice("🎙  Capture", "capture"),
                 questionary.Choice("📝  Transcription", "transcription"),
                 questionary.Choice("✨  Summarize", "summarize"),
+                questionary.Choice("📚  Library", "library"),
                 questionary.Choice("⚙   Config", "config"),
                 SEPARATOR,
                 questionary.Choice("🚪  Exit", "exit"),
@@ -683,6 +813,8 @@ def run_tui(service, *, service_factory=None) -> None:
                 _menu_transcription(service)
             elif choice == "summarize":
                 _menu_summarize(service)
+            elif choice == "library":
+                _menu_library(service)
             elif choice == "config":
                 config_changed = _menu_config()
                 if config_changed and service_factory:
