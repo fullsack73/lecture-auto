@@ -63,7 +63,13 @@ class FasterWhisperSTTRuntimeAdapter:
         segments: list[DiarizedSegment] = []
         text_parts: list[str] = []
 
+        import sys
+        
         for seg in raw_segments:
+            progress_pct = (seg.end / info.duration) * 100 if info.duration > 0 else 0
+            sys.stdout.write(f"\rTranscribing... {progress_pct:.1f}% ({seg.end:.1f}s / {info.duration:.1f}s)")
+            sys.stdout.flush()
+            
             text_parts.append(seg.text.strip())
             segments.append(
                 DiarizedSegment(
@@ -73,6 +79,9 @@ class FasterWhisperSTTRuntimeAdapter:
                     text=seg.text.strip(),
                 )
             )
+        
+        sys.stdout.write("\rTranscribing... 100.0% Complete!                  \n")
+        sys.stdout.flush()
 
         transcript_text = " ".join(text_parts)
 
