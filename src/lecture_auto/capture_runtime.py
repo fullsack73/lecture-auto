@@ -88,9 +88,67 @@ class NoopCaptureRuntimeAdapter:
 class FFmpegCaptureRuntimeAdapter:
     """Real runtime adapter that starts/stops FFmpeg-based audio capture."""
 
-    def __init__(self, ffmpeg_bin: str = "ffmpeg") -> None:
+    def __init__(self, ffmpeg_bin: str = "ffmpeg", capture_source: str = "microphone") -> None:
         self.ffmpeg_bin = ffmpeg_bin
+        self.capture_source = capture_source
         self._processes: dict[str, subprocess.Popen[bytes]] = {}
+
+    def _resolve_device_index(self) -> str:
+        """Runs ffmpeg to list AVFoundation devices and returns the appropriate device index."""
+        # Note: on Linux/Windows, this approach will differ. For macOS:
+        try:
+            result = subprocess.run(
+                [self.ffmpeg_bin, "-f", "avfoundation", "-list_devices", "true", "-i", ""],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            output = result.stderr  # FFmpeg prints device list to stderr
+        except FileNotFoundError as exc:
+            raise CaptureDependencyError("FFmpeg is not installed or not on PATH") from exc
+
+        # Extract only the audio devices section
+        audio_section = False
+        devices = []
+        for line in output.splitlines():
+            if "AVFoundation audio devices:" in line:
+                audio_section = True
+                continue
+            if "AVFoundation video devices:" in line:
+                audio_section = False
+                continue
+            
+            if audio_section and "[" in line and "]" in line:
+                try:
+                    # Format is typically: [AVFoundation input device @ 0x...] [0] Built-in Microphone
+                    idx_start = line.rfind("[") + 1
+                    idx_end = line.rfind("]")
+                    if idx_start > 0 and idx_end > idx_start:
+                        idx_str = line[idx_start:idx_end].strip()
+                        name = line[idx_end + 1:].strip()
+                        devices.append((idx_str, name.lower()))
+                except Exception:
+                    continue
+
+        if self.capture_source == "system_audio":
+            keywords = ["blackhole", "steam streaming speakers", "soundflower", "loopback", "swb"]
+            for idx, name in devices:
+                if any(kw in name for kw in keywords):
+                    return idx
+            raise CaptureDeviceError(
+                "No system audio loopback device found. Please install a virtual audio driver like BlackHole."
+            )
+        else:
+            # Default to microphone
+            keywords = ["microphone", "built-in", "mic"]
+            for idx, name in devices:
+                if any(kw in name for kw in keywords):
+                    return idx
+            # Fallback to the first available audio device
+            if devices:
+                return devices[0][0]
+            
+            return "0"  # Absolute fallback if we couldn't parse any devices
 
     def start_capture(self, session_id: str, output_path: str) -> CaptureHandle:
         if session_id in self._processes:
@@ -98,13 +156,15 @@ class FFmpegCaptureRuntimeAdapter:
 
         Path(output_path).parent.mkdir(parents=True, exist_ok=True)
 
+        device_idx = self._resolve_device_index()
+
         command = [
             self.ffmpeg_bin,
             "-y",
             "-f",
             "avfoundation",
             "-i",
-            ":0",
+            f":{device_idx}",
             output_path,
         ]
 
@@ -115,8 +175,6 @@ class FFmpegCaptureRuntimeAdapter:
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             )
-        except FileNotFoundError as exc:
-            raise CaptureDependencyError("FFmpeg is not installed or not on PATH") from exc
         except PermissionError as exc:
             raise CapturePermissionError("OS permissions denied capture startup") from exc
         except OSError as exc:

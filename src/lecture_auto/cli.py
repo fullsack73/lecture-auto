@@ -63,6 +63,7 @@ def _build_service() -> SessionService:
     config_llm_model_name = None
     config_llm_thinking_level = None
     config_audio_format = None
+    config_capture_source = None
     config_google_project_id = None
     config_google_location = None
     config_path = _get_global_config_path()
@@ -82,6 +83,7 @@ def _build_service() -> SessionService:
                 config_llm_model_name = config_data.get("llm_model_name")
                 config_llm_thinking_level = config_data.get("llm_thinking_level")
                 config_audio_format = config_data.get("audio_format")
+                config_capture_source = config_data.get("capture_source")
                 config_google_project_id = config_data.get("google_project_id")
                 config_google_location = config_data.get("google_location")
         except Exception:
@@ -122,7 +124,9 @@ def _build_service() -> SessionService:
 
     return SessionService(
         store=store,
-        runtime_adapter=FFmpegCaptureRuntimeAdapter(),
+        runtime_adapter=FFmpegCaptureRuntimeAdapter(
+            capture_source=os.environ.get("LECTURE_AUTO_CAPTURE_SOURCE") or config_capture_source or "microphone"
+        ),
         stt_config=stt_config,
         llm_adapter=llm_adapter,
         audio_format=os.environ.get("LECTURE_AUTO_AUDIO_FORMAT") or config_audio_format or "wav",
@@ -298,6 +302,7 @@ def config_set(
     llm_model_name: str | None = typer.Option(None, "--llm-model", help="LLM model name (gemini-3.1-flash-lite-preview or gemini-3.1-pro-preview)"),
     llm_thinking_level: str | None = typer.Option(None, "--llm-thinking-level", help="LLM thinking level (minimal, low, medium, high)"),
     audio_format: str | None = typer.Option(None, "--audio-format", help="Default audio format for recordings (wav or mp3)"),
+    capture_source: str | None = typer.Option(None, "--capture-source", help="Capture source (microphone or system_audio)"),
     google_project_id: str | None = typer.Option(None, "--google-project-id", help="Google Cloud project ID (required for google-chirp3 STT provider)"),
 ) -> None:
     config_path = _get_global_config_path()
@@ -392,6 +397,15 @@ def config_set(
             raise typer.Exit(code=1)
         config_data["audio_format"] = audio_format
         typer.echo(f"Global audio format set to: {config_data['audio_format']}")
+        updated = True
+
+    if capture_source is not None:
+        normalized_source = capture_source.strip().lower()
+        if normalized_source not in ("microphone", "system_audio"):
+            typer.echo("Capture source must be 'microphone' or 'system_audio'.", err=True)
+            raise typer.Exit(code=1)
+        config_data["capture_source"] = normalized_source
+        typer.echo(f"Global capture source set to: {config_data['capture_source']}")
         updated = True
 
     if google_project_id is not None:

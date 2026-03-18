@@ -101,6 +101,25 @@ def _select_stt_mode(current: str = "") -> str | None:
     return _select("Select STT mode", choices)
 
 
+def _select_capture_source(current: str = "") -> str | None:
+    """Select audio capture source for persisted config."""
+    choices = [
+        questionary.Choice(
+            title="Microphone (default)",
+            value="microphone",
+            checked=current == "microphone" or current == "",
+        ),
+        questionary.Choice(
+            title="System Audio (requires BlackHole, Loopback, etc.)",
+            value="system_audio",
+            checked=current == "system_audio",
+        ),
+        questionary.Separator(),
+        questionary.Choice(title="Cancel", value="__cancel__"),
+    ]
+    return _select("Select capture source", choices)
+
+
 def _select_stt_local_model(current: str = "") -> str | None:
     """Select a recommended local Whisper model or enter one manually."""
     choices = [
@@ -658,6 +677,7 @@ def _menu_config() -> bool:
                 "── General ──",
                 ("workspace", "Workspace directory"),
                 ("audio_format", "Audio format (wav or mp3)"),
+                ("capture_source", "Capture source (microphone or system_audio)"),
                 "── STT (Speech-to-Text) ──",
                 ("stt_mode", "STT mode (api or local)"),
                 ("stt_language", "STT language (e.g. ko)"),
@@ -711,6 +731,10 @@ def _menu_config() -> bool:
                         continue
                     if value == "__clear__":
                         value = ""
+                elif selected_key == "capture_source":
+                    value = _select_capture_source(data.get(selected_key, "") or "")
+                    if value in (None, "__cancel__"):
+                        continue
                 elif selected_key == "stt_mode":
                     value = _select_stt_mode(data.get(selected_key, "") or "")
                     if value in (None, "__cancel__"):
