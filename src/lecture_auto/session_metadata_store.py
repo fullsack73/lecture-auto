@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path, PurePosixPath
 from tempfile import NamedTemporaryFile
 from typing import Any
@@ -189,7 +190,25 @@ class SessionMetadataStore:
         if not isinstance(session["naming_pending"], bool):
             raise SessionMetadataValidationError("Field 'naming_pending' must be a boolean")
 
-    def build_recording_path(self, session_id: str, extension: str = "wav") -> str:
+    def normalize_course_folder(self, course: str | None) -> str | None:
+        if course is None:
+            return None
+
+        text = course.strip().lower()
+        if not text:
+            return None
+
+        # Keep folder names filesystem-safe and stable across platforms.
+        slug = re.sub(r"[^a-z0-9]+", "-", text).strip("-")
+        return slug or None
+
+    def build_recording_path(
+        self,
+        session_id: str,
+        extension: str = "wav",
+        *,
+        course: str | None = None,
+    ) -> str:
         if not session_id.strip():
             raise SessionMetadataValidationError("session_id must be a non-empty string")
 
@@ -197,9 +216,19 @@ class SessionMetadataStore:
         if not clean_extension:
             raise SessionMetadataValidationError("Recording extension must be a non-empty string")
 
+        course_folder = self.normalize_course_folder(course)
+        if course_folder:
+            return f"recordings/{course_folder}/{session_id}.{clean_extension}"
         return f"recordings/{session_id}.{clean_extension}"
 
-    def build_imported_audio_path(self, session_id: str, extension: str, *, ordinal: int = 1) -> str:
+    def build_imported_audio_path(
+        self,
+        session_id: str,
+        extension: str,
+        *,
+        ordinal: int = 1,
+        course: str | None = None,
+    ) -> str:
         if not session_id.strip():
             raise SessionMetadataValidationError("session_id must be a non-empty string")
         if ordinal < 1:
@@ -210,9 +239,12 @@ class SessionMetadataStore:
             raise SessionMetadataValidationError("Import extension must be a non-empty string")
 
         suffix = "" if ordinal == 1 else f"-{ordinal}"
+        course_folder = self.normalize_course_folder(course)
+        if course_folder:
+            return f"recordings/{course_folder}/{session_id}-imported{suffix}.{clean_extension}"
         return f"recordings/{session_id}-imported{suffix}.{clean_extension}"
 
-    def next_imported_audio_path(self, session_id: str, extension: str) -> str:
+    def next_imported_audio_path(self, session_id: str, extension: str, *, course: str | None = None) -> str:
         normalized_extension = extension.lstrip(".").strip().lower()
         existing_paths = {
             row["audio_file_path"]
@@ -226,12 +258,19 @@ class SessionMetadataStore:
                 session_id,
                 normalized_extension,
                 ordinal=ordinal,
+                course=course,
             )
             if candidate not in existing_paths:
                 return candidate
             ordinal += 1
 
-    def build_raw_transcript_path(self, session_id: str, extension: str = "md") -> str:
+    def build_raw_transcript_path(
+        self,
+        session_id: str,
+        extension: str = "md",
+        *,
+        course: str | None = None,
+    ) -> str:
         if not session_id.strip():
             raise SessionMetadataValidationError("session_id must be a non-empty string")
 
@@ -239,9 +278,27 @@ class SessionMetadataStore:
         if clean_extension not in {"md", "txt"}:
             raise SessionMetadataValidationError("Transcript extension must be 'md' or 'txt'")
 
+        course_folder = self.normalize_course_folder(course)
+        if course_folder:
+            return f"transcripts/{course_folder}/{session_id}-raw.{clean_extension}"
         return f"transcripts/{session_id}-raw.{clean_extension}"
 
-    def build_note_path(self, session_id: str, extension: str = "md") -> str:
+    def build_edited_transcript_path(self, session_id: str, *, course: str | None = None) -> str:
+        if not session_id.strip():
+            raise SessionMetadataValidationError("session_id must be a non-empty string")
+
+        course_folder = self.normalize_course_folder(course)
+        if course_folder:
+            return f"transcripts/{course_folder}/{session_id}-edited.md"
+        return f"transcripts/{session_id}-edited.md"
+
+    def build_note_path(
+        self,
+        session_id: str,
+        extension: str = "md",
+        *,
+        course: str | None = None,
+    ) -> str:
         if not session_id.strip():
             raise SessionMetadataValidationError("session_id must be a non-empty string")
 
@@ -249,17 +306,33 @@ class SessionMetadataStore:
         if clean_extension != "md":
             raise SessionMetadataValidationError("Note extension must be 'md'")
 
+        course_folder = self.normalize_course_folder(course)
+        if course_folder:
+            return f"notes/{course_folder}/{session_id}.{clean_extension}"
         return f"notes/{session_id}.{clean_extension}"
 
     def _validate_audio_path_for_session(self, session_id: str, audio_file_path: str) -> None:
-        expected_prefixes = (
-            f"recordings/{session_id}.",
-            f"recordings/{session_id}-imported.",
-            f"recordings/{session_id}-imported-",
-        )
         normalized = PurePosixPath(audio_file_path).as_posix()
 
-        if not normalized.startswith(expected_prefixes):
+        if not normalized.startswith("recordings/"):
+            raise SessionMetadataValidationError(
+                "Field 'audio_file_path' must follow recordings/{session_id}.* convention"
+            )
+
+        path = PurePosixPath(normalized)
+        parts = path.parts
+        if len(parts) not in {2, 3}:
+            raise SessionMetadataValidationError(
+                "Field 'audio_file_path' must follow recordings/{session_id}.* convention"
+            )
+
+        filename = parts[-1]
+        expected_prefixes = (
+            f"{session_id}.",
+            f"{session_id}-imported.",
+            f"{session_id}-imported-",
+        )
+        if not filename.startswith(expected_prefixes):
             raise SessionMetadataValidationError(
                 "Field 'audio_file_path' must follow recordings/{session_id}.* convention"
             )
@@ -270,8 +343,22 @@ class SessionMetadataStore:
         transcript_file_path: str,
     ) -> None:
         normalized = PurePosixPath(transcript_file_path).as_posix()
-        expected_prefix = f"transcripts/{session_id}-raw."
-        if not normalized.startswith(expected_prefix):
+
+        if not normalized.startswith("transcripts/"):
+            raise SessionMetadataValidationError(
+                "Field 'transcript_file_path' must follow transcripts/{session_id}-raw.* convention"
+            )
+
+        path = PurePosixPath(normalized)
+        parts = path.parts
+        if len(parts) not in {2, 3}:
+            raise SessionMetadataValidationError(
+                "Field 'transcript_file_path' must follow transcripts/{session_id}-raw.* convention"
+            )
+
+        filename = parts[-1]
+        expected_prefix = f"{session_id}-raw."
+        if not filename.startswith(expected_prefix):
             raise SessionMetadataValidationError(
                 "Field 'transcript_file_path' must follow transcripts/{session_id}-raw.* convention"
             )

@@ -38,14 +38,14 @@ def test_end_to_end_refinement_chunking(store: SessionMetadataStore) -> None:
         "title": "Long Lecture",
         "course": "CS102",
         "status": "completed",
-        "transcript_file_path": "transcripts/long-session-1-raw.md",
+        "transcript_file_path": "transcripts/cs102/long-session-1-raw.md",
         "timestamps": {"created_at": "2026-03-01T12:00:00Z"},
         "naming_pending": False,
     }
     with store.metadata_file.open("w", encoding="utf-8") as f:
         f.write(json.dumps([session]))
     
-    transcripts_dir = store.metadata_file.parent.parent / "transcripts"
+    transcripts_dir = store.metadata_file.parent.parent / "transcripts" / "cs102"
     transcripts_dir.mkdir(parents=True, exist_ok=True)
     raw_path = transcripts_dir / "long-session-1-raw.md"
     
@@ -82,7 +82,7 @@ def test_refine_missing_transcript_raises_error(store: SessionMetadataStore) -> 
         "title": "Missing Lecture",
         "course": "CS102",
         "status": "completed",
-        "transcript_file_path": "transcripts/missing-session-raw.md",
+        "transcript_file_path": "transcripts/cs102/missing-session-raw.md",
         "timestamps": {"created_at": "2026-03-01T12:00:00Z"},
         "naming_pending": False,
     }
@@ -105,14 +105,14 @@ def test_refine_empty_transcript_raises_error(store: SessionMetadataStore) -> No
         "title": "Empty Lecture",
         "course": "CS102",
         "status": "completed",
-        "transcript_file_path": "transcripts/empty-session-raw.md",
+        "transcript_file_path": "transcripts/cs102/empty-session-raw.md",
         "timestamps": {"created_at": "2026-03-01T12:00:00Z"},
         "naming_pending": False,
     }
     with store.metadata_file.open("w", encoding="utf-8") as f:
         f.write(json.dumps([session]))
 
-    transcripts_dir = store.metadata_file.parent.parent / "transcripts"
+    transcripts_dir = store.metadata_file.parent.parent / "transcripts" / "cs102"
     transcripts_dir.mkdir(parents=True, exist_ok=True)
     raw_path = transcripts_dir / "empty-session-raw.md"
     raw_path.write_text("   ")

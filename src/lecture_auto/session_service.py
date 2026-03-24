@@ -107,6 +107,7 @@ class SessionService:
         self._api_stt_adapter = api_stt_adapter
         self.llm_adapter = llm_adapter
         self.audio_format = audio_format
+        self._migrate_legacy_artifact_paths()
 
     def session_create(
         self,
@@ -138,7 +139,9 @@ class SessionService:
         session = self._require_session(session_id)
         self._transition_or_raise(session, target_state="recording")
         resolved_audio_path = audio_file_path or self.store.build_recording_path(
-            session_id, extension=self.audio_format
+            session_id,
+            extension=self.audio_format,
+            course=session.get("course"),
         )
         metadata_root = self.store.metadata_file.parent.parent
         runtime_output_path = resolved_audio_path
@@ -298,9 +301,15 @@ class SessionService:
                             rename_pairs.append((old_abs, new_abs))
                             session[field] = new_rel
 
-                old_edited = metadata_root / f"transcripts/{session_id}-edited.md"
+                old_edited = metadata_root / self.store.build_edited_transcript_path(
+                    session_id,
+                    course=session.get("course"),
+                )
                 if old_edited.exists():
-                    new_edited = metadata_root / f"transcripts/{new_id}-edited.md"
+                    new_edited = metadata_root / self.store.build_edited_transcript_path(
+                        new_id,
+                        course=session.get("course"),
+                    )
                     rename_pairs.append((old_edited, new_edited))
 
                 # Perform renames before touching metadata
@@ -345,7 +354,10 @@ class SessionService:
         if session.get("transcript_file_path"):
             files_to_delete.append(metadata_root / session["transcript_file_path"])
         
-        edited_transcript = metadata_root / f"transcripts/{session_id}-edited.md"
+        edited_transcript = metadata_root / self.store.build_edited_transcript_path(
+            session_id,
+            course=session.get("course"),
+        )
         if edited_transcript.exists():
             files_to_delete.append(edited_transcript)
             
@@ -398,7 +410,11 @@ class SessionService:
 
         persisted_path = session.get("audio_file_path")
         if not persisted_path:
-            persisted_path = self.store.next_imported_audio_path(session_id, extension)
+            persisted_path = self.store.next_imported_audio_path(
+                session_id,
+                extension,
+                course=session.get("course"),
+            )
 
         try:
             self._copy_import_audio(
@@ -576,7 +592,10 @@ class SessionService:
         if transcript_result and transcript_result.segments:
             output_text = transcript_result.to_diarized_markdown()
 
-        transcript_relative_path = self.store.build_raw_transcript_path(session_id)
+        transcript_relative_path = self.store.build_raw_transcript_path(
+            session_id,
+            course=session.get("course"),
+        )
         try:
             self._write_transcript_file(
                 transcript_relative_path=transcript_relative_path,
@@ -877,9 +896,7 @@ class SessionService:
                 exit_code=1,
             )
         
-        metadata_root = self.store.metadata_file.parent.parent
-        raw_transcript_path = metadata_root / raw_transcript_path_str
-        edited_transcript_path = metadata_root / f"transcripts/{session_id}-edited.md"
+        raw_transcript_path, edited_transcript_path = self._resolve_transcript_paths(session)
 
         active_path = edited_transcript_path if edited_transcript_path.exists() else raw_transcript_path
         
@@ -953,9 +970,7 @@ class SessionService:
                 exit_code=1,
             )
 
-        metadata_root = self.store.metadata_file.parent.parent
-        raw_transcript_path = metadata_root / raw_transcript_path_str
-        edited_transcript_path = metadata_root / f"transcripts/{session_id}-edited.md"
+        raw_transcript_path, edited_transcript_path = self._resolve_transcript_paths(session)
 
         target_path = raw_transcript_path
         if not raw and edited_transcript_path.exists():
@@ -993,7 +1008,10 @@ class SessionService:
             raise SessionCommandError(code="LLM_UNKNOWN_ERROR", message=f"Unexpected refinement failure: {exc}", guidance="Check debug logs.", exit_code=1)
 
         self._write_transcript_file(
-            transcript_relative_path=f"transcripts/{session_id}-edited.md",
+            transcript_relative_path=self.store.build_edited_transcript_path(
+                session_id,
+                course=session.get("course"),
+            ),
             transcript_text=refined_text
         )
 
@@ -1061,7 +1079,10 @@ class SessionService:
                 exit_code=1,
             ) from exc
 
-        note_relative_path = self.store.build_note_path(session_id)
+        note_relative_path = self.store.build_note_path(
+            session_id,
+            course=session.get("course"),
+        )
         payload = {
             "session_id": session_id,
             "template": resolved_template_name,
@@ -1186,13 +1207,7 @@ class SessionService:
 
     def _load_summary_transcript(self, session: dict[str, Any]) -> tuple[str, str]:
         session_id = session["session_id"]
-        metadata_root = self.store.metadata_file.parent.parent
-        edited_path = metadata_root / f"transcripts/{session_id}-edited.md"
-
-        raw_relative_path = session.get("transcript_file_path") or self.store.build_raw_transcript_path(
-            session_id
-        )
-        raw_path = metadata_root / raw_relative_path
+        raw_path, edited_path = self._resolve_transcript_paths(session)
 
         target_path = edited_path if edited_path.exists() else raw_path
         source_name = "edited" if target_path == edited_path else "raw"
@@ -1205,6 +1220,39 @@ class SessionService:
             )
 
         return target_path.read_text(encoding="utf-8"), source_name
+
+    def _resolve_transcript_paths(self, session: dict[str, Any]) -> tuple[Path, Path]:
+        session_id = session["session_id"]
+        metadata_root = self.store.metadata_file.parent.parent
+
+        preferred_raw_relative = session.get("transcript_file_path") or self.store.build_raw_transcript_path(
+            session_id,
+            course=session.get("course"),
+        )
+        preferred_raw_path = metadata_root / preferred_raw_relative
+        legacy_raw_path = metadata_root / f"transcripts/{session_id}-raw.md"
+
+        if preferred_raw_path.exists() or not legacy_raw_path.exists():
+            raw_path = preferred_raw_path
+        else:
+            raw_path = legacy_raw_path
+
+        preferred_edited_path = metadata_root / self.store.build_edited_transcript_path(
+            session_id,
+            course=session.get("course"),
+        )
+        legacy_edited_path = metadata_root / f"transcripts/{session_id}-edited.md"
+
+        if preferred_edited_path.exists():
+            edited_path = preferred_edited_path
+        elif legacy_edited_path.exists():
+            edited_path = legacy_edited_path
+        elif raw_path == legacy_raw_path:
+            edited_path = legacy_edited_path
+        else:
+            edited_path = preferred_edited_path
+
+        return raw_path, edited_path
 
     def list_note_templates(self) -> list[str]:
         """List available summary note templates."""
@@ -1243,3 +1291,132 @@ class SessionService:
             guidance=f"Use a preset template or create {user_dir}/<name>.md.",
             exit_code=1,
         )
+
+    def _migrate_legacy_artifact_paths(self) -> None:
+        sessions = self.store.load_all()
+        if not sessions:
+            return
+
+        metadata_root = self.store.metadata_file.parent.parent
+        changed = False
+
+        for session in sessions:
+            session_id = session.get("session_id")
+            if not isinstance(session_id, str) or not session_id.strip():
+                continue
+
+            course = session.get("course") if isinstance(session.get("course"), str) else None
+
+            changed = self._migrate_single_session_artifacts(
+                session=session,
+                metadata_root=metadata_root,
+                session_id=session_id,
+                course=course,
+            ) or changed
+
+        if changed:
+            self.store._safe_write(sessions)
+
+    def _migrate_single_session_artifacts(
+        self,
+        *,
+        session: dict[str, Any],
+        metadata_root: Path,
+        session_id: str,
+        course: str | None,
+    ) -> bool:
+        changed = False
+
+        audio_path = session.get("audio_file_path")
+        if isinstance(audio_path, str) and audio_path.startswith("recordings/"):
+            filename = Path(audio_path).name
+            target_audio = f"recordings/{filename}"
+            if "-imported" in filename:
+                extension = Path(filename).suffix.lstrip(".")
+                target_audio = self.store.build_imported_audio_path(
+                    session_id,
+                    extension,
+                    ordinal=self._extract_import_ordinal(filename),
+                    course=course,
+                )
+            elif filename.startswith(f"{session_id}."):
+                extension = Path(filename).suffix.lstrip(".")
+                target_audio = self.store.build_recording_path(
+                    session_id,
+                    extension=extension,
+                    course=course,
+                )
+
+            changed = self._move_and_update_relative_path(
+                metadata_root=metadata_root,
+                current_relative=audio_path,
+                target_relative=target_audio,
+            ) or changed
+            if target_audio != audio_path:
+                session["audio_file_path"] = target_audio
+                changed = True
+
+        transcript_path = session.get("transcript_file_path")
+        if isinstance(transcript_path, str) and transcript_path.startswith("transcripts/"):
+            ext = Path(transcript_path).suffix.lstrip(".") or "md"
+            target_transcript = self.store.build_raw_transcript_path(
+                session_id,
+                extension=ext,
+                course=course,
+            )
+            changed = self._move_and_update_relative_path(
+                metadata_root=metadata_root,
+                current_relative=transcript_path,
+                target_relative=target_transcript,
+            ) or changed
+            if target_transcript != transcript_path:
+                session["transcript_file_path"] = target_transcript
+                changed = True
+
+        note_flat = f"notes/{session_id}.md"
+        note_target = self.store.build_note_path(session_id, course=course)
+        changed = self._move_and_update_relative_path(
+            metadata_root=metadata_root,
+            current_relative=note_flat,
+            target_relative=note_target,
+        ) or changed
+
+        edited_flat = f"transcripts/{session_id}-edited.md"
+        edited_target = self.store.build_edited_transcript_path(session_id, course=course)
+        changed = self._move_and_update_relative_path(
+            metadata_root=metadata_root,
+            current_relative=edited_flat,
+            target_relative=edited_target,
+        ) or changed
+
+        return changed
+
+    def _extract_import_ordinal(self, filename: str) -> int:
+        stem = Path(filename).stem
+        parts = stem.split("-imported-")
+        if len(parts) == 2 and parts[1].isdigit():
+            return max(1, int(parts[1]))
+        return 1
+
+    def _move_and_update_relative_path(
+        self,
+        *,
+        metadata_root: Path,
+        current_relative: str,
+        target_relative: str,
+    ) -> bool:
+        if current_relative == target_relative:
+            return False
+
+        current_path = metadata_root / current_relative
+        target_path = metadata_root / target_relative
+
+        if not current_path.exists():
+            return False
+
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        if target_path.exists():
+            return False
+
+        shutil.move(str(current_path), str(target_path))
+        return True

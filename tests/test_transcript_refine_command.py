@@ -32,15 +32,15 @@ def service(store: SessionMetadataStore, llm_adapter: MagicMock) -> SessionServi
         "title": "Introduction to AI",
         "course": "CS101",
         "status": "completed",
-        "transcript_file_path": "transcripts/test-session-1-raw.md",
+        "transcript_file_path": "transcripts/cs101/test-session-1-raw.md",
         "timestamps": {"created_at": "2026-03-01T12:00:00Z"},
         "naming_pending": False,
     }
     with store.metadata_file.open("w", encoding="utf-8") as f:
         f.write(json.dumps([session]))
     
-    (store.metadata_file.parent.parent / "transcripts").mkdir(parents=True)
-    raw_path = store.metadata_file.parent.parent / "transcripts/test-session-1-raw.md"
+    (store.metadata_file.parent.parent / "transcripts" / "cs101").mkdir(parents=True)
+    raw_path = store.metadata_file.parent.parent / "transcripts/cs101/test-session-1-raw.md"
     raw_path.write_text("Hello, this  is a raw transcript... It needs    refinement.")
 
     return SessionService(store=store, llm_adapter=llm_adapter)
@@ -56,13 +56,13 @@ def test_refine_falls_back_to_raw_when_edited_missing(service: SessionService) -
         context_topic="Introduction to AI"
     )
     
-    transcripts_dir = service.store.metadata_file.parent.parent / "transcripts"
+    transcripts_dir = service.store.metadata_file.parent.parent / "transcripts" / "cs101"
     assert (transcripts_dir / "test-session-1-edited.md").exists()
     assert (transcripts_dir / "test-session-1-edited.md").read_text() == "Refined Mock Output"
 
 
 def test_refine_uses_edited_when_present(service: SessionService) -> None:
-    transcripts_dir = service.store.metadata_file.parent.parent / "transcripts"
+    transcripts_dir = service.store.metadata_file.parent.parent / "transcripts" / "cs101"
     edited_path = transcripts_dir / "test-session-1-edited.md"
     edited_path.write_text("This is an existing edited transcript.")
 
@@ -77,7 +77,7 @@ def test_refine_uses_edited_when_present(service: SessionService) -> None:
 
 
 def test_refine_forces_raw_with_flag_even_if_edited_present(service: SessionService) -> None:
-    transcripts_dir = service.store.metadata_file.parent.parent / "transcripts"
+    transcripts_dir = service.store.metadata_file.parent.parent / "transcripts" / "cs101"
     edited_path = transcripts_dir / "test-session-1-edited.md"
     edited_path.write_text("This is an existing edited transcript.")
 
@@ -113,7 +113,7 @@ def test_refine_cli_formatting() -> None:
     assert "- Result: Transcript successfully refined from edited source." in output
 
 def test_refine_uses_raw_when_raw_is_newer(service: SessionService) -> None:
-    transcripts_dir = service.store.metadata_file.parent.parent / "transcripts"
+    transcripts_dir = service.store.metadata_file.parent.parent / "transcripts" / "cs101"
     edited_path = transcripts_dir / "test-session-1-edited.md"
     edited_path.write_text("This is an existing edited transcript.")
     

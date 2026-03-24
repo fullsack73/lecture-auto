@@ -82,7 +82,7 @@ def test_summarize_preview_returns_notes_without_writing_file(
 
     assert result.message == "generated notes"
     assert result.payload["preview"] is True
-    note_path = tmp_path / "notes" / "session-new.md"
+    note_path = tmp_path / "notes" / "course-2" / "session-new.md"
     assert not note_path.exists()
 
 
@@ -93,9 +93,9 @@ def test_summarize_save_writes_and_overwrites_note_file(tmp_path: Path) -> None:
     first = service.summarize_session(session_reference="session-old", preview=False)
     second = service.summarize_session(session_reference="session-old", preview=False)
 
-    assert first.payload["note_file_path"] == "notes/session-old.md"
-    assert second.payload["note_file_path"] == "notes/session-old.md"
+    assert first.payload["note_file_path"] == "notes/course-1/session-old.md"
+    assert second.payload["note_file_path"] == "notes/course-1/session-old.md"
 
-    note_path = tmp_path / "notes" / "session-old.md"
+    note_path = tmp_path / "notes" / "course-1" / "session-old.md"
     assert note_path.exists()
     assert note_path.read_text(encoding="utf-8") == "second notes"

@@ -100,13 +100,25 @@ class LibraryService:
                 continue
 
             # Match on note content if file exists
-            note_path = self.base_dir / "notes" / f"{session['session_id']}.md"
-            if note_path.exists():
+            note_relative = self.store.build_note_path(
+                session["session_id"],
+                course=session.get("course"),
+            )
+            note_path = self.base_dir / note_relative
+            legacy_note_path = self.base_dir / "notes" / f"{session['session_id']}.md"
+            candidate_paths = [note_path]
+            if legacy_note_path != note_path:
+                candidate_paths.append(legacy_note_path)
+
+            for candidate in candidate_paths:
+                if not candidate.exists():
+                    continue
                 try:
-                    with note_path.open("r", encoding="utf-8") as f:
+                    with candidate.open("r", encoding="utf-8") as f:
                         content = f.read()
                         if query_lower in content.lower():
                             matched_sessions.append(session)
+                            break
                 except (IOError, OSError):
                     pass
 
@@ -168,12 +180,26 @@ class LibraryService:
             )
 
         # Determine target folder
+        course = session.get("course")
         if open_transcript:
-            target_folder = self.base_dir / "transcripts"
+            transcript_rel = Path(
+                self.store.build_raw_transcript_path(session_id, course=course)
+            )
+            target_folder = self.base_dir / transcript_rel.parent
+            fallback_folder = self.base_dir / "transcripts"
         elif open_recordings:
-            target_folder = self.base_dir / "recordings"
+            recording_rel = Path(
+                self.store.build_recording_path(session_id, course=course)
+            )
+            target_folder = self.base_dir / recording_rel.parent
+            fallback_folder = self.base_dir / "recordings"
         else:
-            target_folder = self.base_dir / "notes"
+            note_rel = Path(self.store.build_note_path(session_id, course=course))
+            target_folder = self.base_dir / note_rel.parent
+            fallback_folder = self.base_dir / "notes"
+
+        if not target_folder.exists() and fallback_folder.exists():
+            target_folder = fallback_folder
 
         # Check if folder exists
         if not target_folder.exists():

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from pathlib import Path
 
 import questionary
@@ -291,7 +292,7 @@ def _menu_session(service) -> None:
             session_id = _ask("Session ID (e.g. cs101-2026-03-09)")
             if not session_id:
                 continue
-            date = _ask("Date (YYYY-MM-DD)", default="2026-03-09")
+            date = _ask("Date (YYYY-MM-DD)", default=time.strftime("%Y-%m-%d"))
             if not date:
                 continue
             title = _ask("Title (optional)")
