@@ -1,4 +1,5 @@
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -183,3 +184,74 @@ def test_deepgram_path_falls_back_to_cwd_relative_audio(tmp_path: Path) -> None:
         assert adapter.seen_audio_path.endswith("recordings/session-1006.wav")
     finally:
         legacy_relative.unlink(missing_ok=True)
+
+
+def test_audio_gain_default_is_noop_and_uses_original_path(tmp_path: Path) -> None:
+    class CapturingAdapter:
+        def __init__(self) -> None:
+            self.seen_audio_path: str | None = None
+
+        def transcribe(self, *, audio_path: str) -> STTResult:
+            self.seen_audio_path = audio_path
+            return STTResult(
+                transcript_text=f"api transcript for {audio_path}",
+                provider="fake-api",
+                mode="api",
+            )
+
+    adapter = CapturingAdapter()
+    service = _service(
+        tmp_path,
+        config=STTConfig(mode="api", api_provider="fake", api_key="k"),
+        api_adapter=adapter,
+    )
+    service.session_create("session-1007", "2026-03-06")
+    source = tmp_path / "sample.wav"
+    source.write_bytes(b"wav")
+    service.import_audio("session-1007", str(source))
+
+    result = service.transcribe_session("session-1007")
+
+    assert adapter.seen_audio_path == "recordings/session-1007-imported.wav"
+    assert result.payload["transcription_progress"]["audio_amplification_applied"] is False
+    assert result.payload["transcription_progress"]["audio_gain_multiplier"] == 1.0
+
+
+def test_audio_gain_above_one_uses_amplified_temp_path(tmp_path: Path) -> None:
+    class CapturingAdapter:
+        def __init__(self) -> None:
+            self.seen_audio_path: str | None = None
+
+        def transcribe(self, *, audio_path: str) -> STTResult:
+            self.seen_audio_path = audio_path
+            return STTResult(
+                transcript_text=f"api transcript for {audio_path}",
+                provider="fake-api",
+                mode="api",
+            )
+
+    adapter = CapturingAdapter()
+    service = _service(
+        tmp_path,
+        config=STTConfig(
+            mode="api",
+            api_provider="fake",
+            api_key="k",
+            audio_gain_multiplier=1.5,
+        ),
+        api_adapter=adapter,
+    )
+    service.session_create("session-1008", "2026-03-06")
+    source = tmp_path / "sample.wav"
+    source.write_bytes(b"wav")
+    service.import_audio("session-1008", str(source))
+
+    with patch("lecture_auto.session_service.amplified_audio_input") as amplifier:
+        amplifier.return_value.__enter__.return_value = "/tmp/amplified-input.wav"
+        amplifier.return_value.__exit__.return_value = False
+
+        result = service.transcribe_session("session-1008")
+
+    assert adapter.seen_audio_path == "/tmp/amplified-input.wav"
+    assert result.payload["transcription_progress"]["audio_amplification_applied"] is True
+    assert result.payload["transcription_progress"]["audio_gain_multiplier"] == 1.5

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import shutil
+from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -35,6 +36,7 @@ from lecture_auto.llm_adapter import (
     LLMProviderAuthError,
     LLMTransientNetworkError,
 )
+from lecture_auto.audio_amplifier import AudioAmplificationError, amplified_audio_input
 
 VALID_STATES = {"idle", "recording", "stopping", "completed", "failed"}
 ALLOWED_TRANSITIONS = {
@@ -546,47 +548,57 @@ class SessionService:
         adapter = self._build_stt_adapter()
         adapter_audio_path = audio_relative_path
         if mode == "api" and self.stt_config.api_provider in ("deepgram", "google-chirp3"):
-            candidate = Path(audio_relative_path)
-            if not candidate.is_absolute():
-                metadata_candidate = (metadata_root / candidate).resolve()
-                cwd_candidate = candidate.resolve()
-                adapter_audio_path = str(
-                    metadata_candidate if metadata_candidate.exists() else cwd_candidate
-                )
+            adapter_audio_path = self._resolve_audio_input_path(audio_relative_path)
 
         transcript_text: str | None = None
         transcript_result = None
-        while True:
-            try:
-                attempt += 1
-                transcript_result = adapter.transcribe(audio_path=adapter_audio_path)
-                transcript_text = transcript_result.transcript_text
-                break
-            except STTTransientNetworkError as exc:
-                if mode == "api" and attempt <= retry_limit:
-                    continue
-                self._mark_transcription_failure(session, "network/transient")
-                raise self.map_transcription_failure(
-                    "network/transient", detail=str(exc)
-                ) from exc
-            except STTProviderAuthError as exc:
-                self._mark_transcription_failure(session, "provider_auth")
-                raise self.map_transcription_failure(
-                    "provider_auth", detail=str(exc)
-                ) from exc
-            except STTAudioDecodeError as exc:
-                self._mark_transcription_failure(session, "audio_decode")
-                raise self.map_transcription_failure(
-                    "audio_decode", detail=str(exc)
-                ) from exc
-            except STTConfigError as exc:
-                self._mark_transcription_failure(session, "configuration")
-                raise self.map_transcription_failure(
-                    "configuration", detail=str(exc)
-                ) from exc
-            except STTRuntimeError as exc:
-                self._mark_transcription_failure(session, "runtime")
-                raise self.map_transcription_failure("runtime", detail=str(exc)) from exc
+        gain = self.stt_config.audio_gain_multiplier
+        source_for_amplification = self._resolve_audio_input_path(audio_relative_path)
+        amplification_context = (
+            amplified_audio_input(
+                audio_path=source_for_amplification,
+                gain_multiplier=gain,
+            )
+            if gain > 1.0
+            else nullcontext(adapter_audio_path)
+        )
+
+        try:
+            with amplification_context as effective_audio_path:
+                while True:
+                    try:
+                        attempt += 1
+                        transcript_result = adapter.transcribe(audio_path=effective_audio_path)
+                        transcript_text = transcript_result.transcript_text
+                        break
+                    except STTTransientNetworkError as exc:
+                        if mode == "api" and attempt <= retry_limit:
+                            continue
+                        self._mark_transcription_failure(session, "network/transient")
+                        raise self.map_transcription_failure(
+                            "network/transient", detail=str(exc)
+                        ) from exc
+                    except STTProviderAuthError as exc:
+                        self._mark_transcription_failure(session, "provider_auth")
+                        raise self.map_transcription_failure(
+                            "provider_auth", detail=str(exc)
+                        ) from exc
+                    except STTAudioDecodeError as exc:
+                        self._mark_transcription_failure(session, "audio_decode")
+                        raise self.map_transcription_failure(
+                            "audio_decode", detail=str(exc)
+                        ) from exc
+                    except STTConfigError as exc:
+                        self._mark_transcription_failure(session, "configuration")
+                        raise self.map_transcription_failure(
+                            "configuration", detail=str(exc)
+                        ) from exc
+                    except STTRuntimeError as exc:
+                        self._mark_transcription_failure(session, "runtime")
+                        raise self.map_transcription_failure("runtime", detail=str(exc)) from exc
+        except AudioAmplificationError as exc:
+            self._mark_transcription_failure(session, "configuration")
+            raise self.map_transcription_failure("configuration", detail=str(exc)) from exc
 
         output_text = transcript_text or ""
         if transcript_result and transcript_result.segments:
@@ -625,6 +637,8 @@ class SessionService:
             "attempt": attempt,
             "retry_limit": retry_limit,
             "mode": mode,
+            "audio_gain_multiplier": gain,
+            "audio_amplification_applied": gain > 1.0,
             "transcript_file_path": transcript_relative_path,
         }
 
@@ -1176,6 +1190,18 @@ class SessionService:
         target = metadata_root / note_relative_path
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(note_text, encoding="utf-8")
+
+    def _resolve_audio_input_path(self, audio_path: str) -> str:
+        candidate = Path(audio_path)
+        if candidate.is_absolute():
+            return str(candidate)
+
+        metadata_root = self.store.metadata_file.parent.parent
+        metadata_candidate = (metadata_root / candidate).resolve()
+        if metadata_candidate.exists():
+            return str(metadata_candidate)
+
+        return str(candidate.resolve())
 
     def _resolve_session_for_reference(self, session_reference: str) -> dict[str, Any]:
         sessions = self.store.list_recent_first()

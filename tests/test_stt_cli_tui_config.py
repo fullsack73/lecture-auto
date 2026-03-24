@@ -76,6 +76,60 @@ def test_build_service_env_overrides_config_for_stt_mode_and_model(tmp_path: Pat
     assert service.stt_config.local_model_name == "base"
 
 
+def test_cli_config_set_persists_audio_gain(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    result = runner.invoke(app, ["config", "set", "--audio-gain", "1.6"])
+
+    assert result.exit_code == 0
+    config_data = json.loads(_config_path(tmp_path).read_text(encoding="utf-8"))
+    assert config_data["audio_gain"] == 1.6
+
+
+def test_cli_config_set_rejects_out_of_range_audio_gain(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    result = runner.invoke(app, ["config", "set", "--audio-gain", "0.8"])
+
+    assert result.exit_code == 1
+    assert "Audio gain must be between 1.0 and 4.0." in (result.output or "")
+
+
+def test_build_service_loads_audio_gain_from_config(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    config_path = _config_path(tmp_path)
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(
+        json.dumps({"audio_gain": 1.8}),
+        encoding="utf-8",
+    )
+
+    service = _build_service()
+
+    assert service.stt_config.audio_gain_multiplier == 1.8
+
+
+def test_tui_menu_config_saves_audio_gain(monkeypatch) -> None:
+    saved: dict = {}
+
+    def _save(data: dict) -> None:
+        saved.clear()
+        saved.update(data)
+
+    with patch("lecture_auto.tui._load_config", return_value={}):
+        with patch("lecture_auto.tui._save_config", side_effect=_save):
+            with patch(
+                "lecture_auto.tui._select",
+                side_effect=["set", "audio_gain", "__save__", "__back__"],
+            ):
+                with patch("lecture_auto.tui._ask", return_value="1.5"):
+                    changed = _menu_config()
+
+    assert changed is True
+    assert saved["audio_gain"] == 1.5
+
+
 def test_tui_menu_config_saves_stt_mode(monkeypatch) -> None:
     saved: dict = {}
 

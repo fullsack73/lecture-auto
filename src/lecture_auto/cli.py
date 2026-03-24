@@ -66,6 +66,7 @@ def _build_service() -> SessionService:
     config_capture_source = None
     config_google_project_id = None
     config_google_location = None
+    config_audio_gain = None
     config_path = _get_global_config_path()
     
     if config_path.exists():
@@ -86,6 +87,7 @@ def _build_service() -> SessionService:
                 config_capture_source = config_data.get("capture_source")
                 config_google_project_id = config_data.get("google_project_id")
                 config_google_location = config_data.get("google_location")
+                config_audio_gain = config_data.get("audio_gain")
         except Exception:
             pass
 
@@ -112,6 +114,13 @@ def _build_service() -> SessionService:
         except LLMConfigError:
             llm_adapter = None
 
+    resolved_audio_gain = 1.0
+    if config_audio_gain is not None:
+        try:
+            resolved_audio_gain = float(config_audio_gain)
+        except (TypeError, ValueError):
+            resolved_audio_gain = 1.0
+
     stt_config = STTConfig(
         mode=os.environ.get("STT_MODE") or config_stt_mode or "api",
         api_provider=os.environ.get("STT_API_PROVIDER") or config_stt_api_provider or "openai-compatible",
@@ -120,6 +129,7 @@ def _build_service() -> SessionService:
         language=config_stt_language,
         google_project_id=os.environ.get("GOOGLE_PROJECT_ID") or config_google_project_id,
         google_location=os.environ.get("GOOGLE_LOCATION") or config_google_location or "us",
+        audio_gain_multiplier=resolved_audio_gain,
     )
 
     return SessionService(
@@ -304,6 +314,7 @@ def config_set(
     audio_format: str | None = typer.Option(None, "--audio-format", help="Default audio format for recordings (wav or mp3)"),
     capture_source: str | None = typer.Option(None, "--capture-source", help="Capture source (microphone or system_audio)"),
     google_project_id: str | None = typer.Option(None, "--google-project-id", help="Google Cloud project ID (required for google-chirp3 STT provider)"),
+    audio_gain: float | None = typer.Option(None, "--audio-gain", help="STT pre-processing gain multiplier (1.0 to 4.0)."),
 ) -> None:
     config_path = _get_global_config_path()
     config_data = {}
@@ -411,6 +422,14 @@ def config_set(
     if google_project_id is not None:
         config_data["google_project_id"] = google_project_id
         typer.echo(f"Google Cloud project ID set to: {config_data['google_project_id']}")
+        updated = True
+
+    if audio_gain is not None:
+        if audio_gain < 1.0 or audio_gain > 4.0:
+            typer.echo("Audio gain must be between 1.0 and 4.0.", err=True)
+            raise typer.Exit(code=1)
+        config_data["audio_gain"] = audio_gain
+        typer.echo(f"Global STT audio gain set to: {config_data['audio_gain']}")
         updated = True
 
     if not updated:

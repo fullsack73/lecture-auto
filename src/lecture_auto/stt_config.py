@@ -20,6 +20,7 @@ class STTConfig:
     diarization: bool = False
     google_project_id: str | None = None
     google_location: str = "us"
+    audio_gain_multiplier: float = 1.0
 
     def validate(self) -> None:
         if self.mode not in {"local", "api"}:
@@ -39,3 +40,8 @@ class STTConfig:
         if self.mode == "local":
             if not self.local_model_name or not self.local_model_name.strip():
                 raise ValueError("Local model name is required when STT mode is 'local'.")
+
+        if self.audio_gain_multiplier < 1.0:
+            raise ValueError("audio_gain_multiplier must be at least 1.0.")
+        if self.audio_gain_multiplier > 4.0:
+            raise ValueError("audio_gain_multiplier must be at most 4.0.")

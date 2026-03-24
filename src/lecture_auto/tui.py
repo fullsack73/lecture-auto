@@ -679,6 +679,7 @@ def _menu_config() -> bool:
                 ("workspace", "Workspace directory"),
                 ("audio_format", "Audio format (wav or mp3)"),
                 ("capture_source", "Capture source (microphone or system_audio)"),
+                ("audio_gain", "STT audio gain multiplier (1.0 to 4.0)"),
                 "── STT (Speech-to-Text) ──",
                 ("stt_mode", "STT mode (api or local)"),
                 ("stt_language", "STT language (e.g. ko)"),
@@ -777,6 +778,18 @@ def _menu_config() -> bool:
                         continue
                     if selected_key == "stt_mode" and value not in ("api", "local"):
                         typer.echo("Invalid STT mode. Must be 'api' or 'local'. Skipping.")
+                        continue
+                    if selected_key == "audio_gain":
+                        try:
+                            numeric_value = float(value)
+                        except ValueError:
+                            typer.echo("Invalid audio gain. Must be a number between 1.0 and 4.0. Skipping.")
+                            continue
+                        if numeric_value < 1.0 or numeric_value > 4.0:
+                            typer.echo("Invalid audio gain. Must be a number between 1.0 and 4.0. Skipping.")
+                            continue
+                        data[selected_key] = numeric_value
+                        updated = True
                         continue
                     if selected_key == "workspace":
                         value = str(Path(value).expanduser().resolve())

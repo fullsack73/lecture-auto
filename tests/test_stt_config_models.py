@@ -27,6 +27,28 @@ def test_stt_config_diarization_enabled() -> None:
     assert config.diarization is True
 
 
+def test_stt_config_audio_gain_defaults_to_one() -> None:
+    config = STTConfig()
+    assert config.audio_gain_multiplier == 1.0
+
+
+def test_stt_config_audio_gain_accepts_upper_boundary() -> None:
+    config = STTConfig(mode="local", local_model_name="base", audio_gain_multiplier=4.0)
+    config.validate()
+
+
+def test_stt_config_audio_gain_rejects_below_one() -> None:
+    config = STTConfig(mode="local", local_model_name="base", audio_gain_multiplier=0.9)
+    with pytest.raises(ValueError, match="at least 1.0"):
+        config.validate()
+
+
+def test_stt_config_audio_gain_rejects_above_upper_boundary() -> None:
+    config = STTConfig(mode="local", local_model_name="base", audio_gain_multiplier=4.1)
+    with pytest.raises(ValueError, match="at most 4.0"):
+        config.validate()
+
+
 def test_stt_config_deepgram_provider_is_supported() -> None:
     assert "deepgram" in SUPPORTED_API_PROVIDERS
 
