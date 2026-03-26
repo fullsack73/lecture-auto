@@ -29,7 +29,7 @@ class LLMProviderAdapter(Protocol):
         self,
         transcript: str,
         template: str,
-        context_topic: str | None = None,
+        context_topic: str | None = None, material_path: str | None = None,
     ) -> str:
         """Generates notes from transcript text and a markdown template."""
         ...
@@ -143,7 +143,7 @@ class GeminiLLMAdapter:
         self,
         transcript: str,
         template: str,
-        context_topic: str | None = None,
+        context_topic: str | None = None, material_path: str | None = None,
     ) -> str:
         """Generates lecture notes from transcript text and template in chunks."""
         if not transcript or not transcript.strip():
@@ -172,6 +172,16 @@ class GeminiLLMAdapter:
                 f"Template:\n{template}\n\n"
                 f"Transcript:\n{transcript}\n"
             )
+
+            contents = [prompt]
+            uploaded_file = None
+
+            if material_path:
+                import os
+                if os.path.exists(material_path):
+                    uploaded_file = self.client.files.upload(file=material_path)
+                    contents.append(uploaded_file)
+                    system_instructions += " A lecture material PDF has been provided as context. Please actively refer to it for accurately capturing terminology and overall structure."
             
             config_dict = {"system_instruction": system_instructions}
             if types:
@@ -179,11 +189,19 @@ class GeminiLLMAdapter:
                     thinking_level=self.config.thinking_level
                 )
 
-            response = self.client.models.generate_content(
-                model=self._normalize_model_name(self.config.model_name),
-                contents=prompt,
-                config=config_dict,
-            )
+            try:
+                response = self.client.models.generate_content(
+                    model=self._normalize_model_name(self.config.model_name),
+                    contents=contents,
+                    config=config_dict,
+                )
+            finally:
+                if uploaded_file:
+                    try:
+                        self.client.files.delete(name=uploaded_file.name)
+                    except Exception:
+                        pass # Best effort cleanup
+
             text = (getattr(response, "text", "") or "").strip()
             return text
 

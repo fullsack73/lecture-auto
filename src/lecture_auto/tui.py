@@ -320,6 +320,7 @@ def _menu_session_detail(service, session_id: str) -> None:
             [
                 questionary.Choice("📄  View detail", "view"),
                 questionary.Choice("✏   Edit metadata", "edit"),
+                questionary.Choice("📤  Import material (PDF)", "import_material"),
                 SEPARATOR,
                 questionary.Choice("← Back", "__back__"),
             ],
@@ -340,6 +341,20 @@ def _menu_session_detail(service, session_id: str) -> None:
             if new_id and new_id != session_id:
                 # Session was renamed — update the local reference and continue
                 session_id = new_id
+
+        elif choice == "import_material":
+            material_path = _ask("Path to PDF material file:", default="")
+            if not material_path.strip():
+                typer.secho("Import cancelled.", fg=typer.colors.YELLOW)
+            else:
+                try:
+                    result = service.import_material(
+                        session_id=session_id,
+                        material_path=material_path.strip(),
+                    )
+                    _echo_result(result)
+                except SessionCommandError as exc:
+                    _echo_error("import material", exc)
 
         typer.echo()
 

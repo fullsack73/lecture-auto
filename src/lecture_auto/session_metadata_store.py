@@ -20,6 +20,7 @@ METADATA_FIELDS = (
     "import_source_audio_path",
     "audio_file_path",
     "transcript_file_path",
+    "material_file_path",
     "transcription_status",
     "transcription_error_category",
     "transcription_retry_count",
@@ -112,6 +113,7 @@ class SessionMetadataStore:
                 "job_error_code",
                 "import_source_audio_path",
                 "transcript_file_path",
+                "material_file_path",
                 "transcription_status",
                 "transcription_error_category",
             ):
@@ -137,6 +139,7 @@ class SessionMetadataStore:
             "course",
             "audio_file_path",
             "transcript_file_path",
+            "material_file_path",
             "transcription_status",
             "transcription_error_category",
         )
@@ -174,6 +177,13 @@ class SessionMetadataStore:
             self._validate_transcript_path_for_session(
                 session_id=session["session_id"],
                 transcript_file_path=transcript_file_path,
+            )
+
+        material_file_path = session.get("material_file_path")
+        if material_file_path is not None:
+            self._validate_material_path_for_session(
+                session_id=session["session_id"],
+                material_file_path=material_file_path,
             )
 
         if (
@@ -311,6 +321,25 @@ class SessionMetadataStore:
             return f"notes/{course_folder}/{session_id}.{clean_extension}"
         return f"notes/{session_id}.{clean_extension}"
 
+    def build_material_path(
+        self,
+        session_id: str,
+        extension: str = "pdf",
+        *,
+        course: str | None = None,
+    ) -> str:
+        if not session_id.strip():
+            raise SessionMetadataValidationError("session_id must be a non-empty string")
+
+        clean_extension = extension.lstrip(".").strip().lower()
+        if clean_extension != "pdf":
+            raise SessionMetadataValidationError("Material extension must be 'pdf'")
+
+        course_folder = self.normalize_course_folder(course)
+        if course_folder:
+            return f"materials/{course_folder}/{session_id}.{clean_extension}"
+        return f"materials/{session_id}.{clean_extension}"
+
     def _validate_audio_path_for_session(self, session_id: str, audio_file_path: str) -> None:
         normalized = PurePosixPath(audio_file_path).as_posix()
 
@@ -361,6 +390,32 @@ class SessionMetadataStore:
         if not filename.startswith(expected_prefix):
             raise SessionMetadataValidationError(
                 "Field 'transcript_file_path' must follow transcripts/{session_id}-raw.* convention"
+            )
+
+    def _validate_material_path_for_session(
+        self,
+        session_id: str,
+        material_file_path: str,
+    ) -> None:
+        normalized = PurePosixPath(material_file_path).as_posix()
+
+        if not normalized.startswith("materials/"):
+            raise SessionMetadataValidationError(
+                "Field 'material_file_path' must follow materials/{session_id}.* convention"
+            )
+
+        path = PurePosixPath(normalized)
+        parts = path.parts
+        if len(parts) not in {2, 3}:
+            raise SessionMetadataValidationError(
+                "Field 'material_file_path' must follow materials/{session_id}.* convention"
+            )
+
+        filename = parts[-1]
+        expected_prefix = f"{session_id}."
+        if not filename.startswith(expected_prefix):
+            raise SessionMetadataValidationError(
+                "Field 'material_file_path' must follow materials/{session_id}.* convention"
             )
 
     def _safe_write(self, sessions: list[dict[str, Any]]) -> None:

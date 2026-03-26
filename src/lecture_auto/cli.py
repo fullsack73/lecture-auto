@@ -234,6 +234,21 @@ def session_update_cmd(
     )
 
 
+@session_app.command("import-material")
+def session_import_material(
+    session_id: str = typer.Argument(..., help="Session ID to import material into"),
+    material_path: str = typer.Argument(..., help="Path to the PDF material file"),
+    as_json: bool = typer.Option(False, "--json", help="Render output as JSON"),
+) -> None:
+    """Import a PDF lecture material into a session."""
+    service = _build_session_service()
+    _run_or_exit(
+        "material import",
+        as_json,
+        lambda: service.import_material(session_id=session_id, material_path=material_path),
+    )
+
+
 @capture_app.command("start")
 def capture_start(
     session_id: str = typer.Argument(..., help="Session id"),

@@ -447,6 +447,48 @@ class SessionService:
             message=f"Audio import completed for session '{session_id}'.",
         )
 
+    def import_material(self, session_id: str, material_path: str) -> CommandResult:
+        session = self._require_session(session_id)
+        normalized_source_path = self._normalize_source_path(material_path)
+        
+        path_obj = Path(normalized_source_path)
+        if path_obj.suffix.lower() != ".pdf":
+            raise SessionCommandError(
+                code="IMPORT_MATERIAL_INVALID_FORMAT",
+                message="Only PDF files are supported for material import.",
+                guidance="Please provide a valid .pdf file.",
+                exit_code=1,
+            )
+
+        persisted_path = self.store.build_material_path(
+            session_id,
+            extension="pdf",
+            course=session.get("course"),
+        )
+        
+        try:
+            self._copy_import_audio(
+                source_path=normalized_source_path,
+                destination_relative_path=persisted_path,
+            )
+        except OSError as exc:
+            raise SessionCommandError(
+                code="IMPORT_MATERIAL_COPY_ERROR",
+                message=f"Failed to copy material file: {str(exc)}",
+                guidance="Check file permissions and try again.",
+                exit_code=1,
+            )
+
+        session["material_file_path"] = persisted_path
+        session.setdefault("timestamps", {})["material_imported_at"] = self._utc_now()
+        
+        saved = self._persist_or_raise(session)
+        return CommandResult(
+            command="material import",
+            payload=saved,
+            message=f"Material imported successfully for session '{session_id}'.",
+        )
+
     def retry_import_audio(self, session_id: str) -> CommandResult:
         session = self._require_session(session_id)
         current_status = session.get("job_status")
@@ -1058,11 +1100,17 @@ class SessionService:
         resolved_template_name, template_text = self._resolve_note_template(template_name)
 
         context_topic = session.get("title") or session.get("course")
+        material_path = None
+        if "material_file_path" in session and session["material_file_path"]:
+            material_root = self.store.metadata_file.parent.parent
+            material_path = str((material_root / session["material_file_path"]).resolve())
+
         try:
             notes = self.llm_adapter.generate_notes(
                 transcript=transcript_text,
                 template=template_text,
                 context_topic=context_topic,
+                material_path=material_path,
             )
         except LLMConfigError as exc:
             raise SessionCommandError(
@@ -1103,6 +1151,7 @@ class SessionService:
             "preview": preview,
             "source_transcript": transcript_source,
             "note_file_path": note_relative_path,
+            "material_file_path": session.get("material_file_path"),
         }
 
         if preview:

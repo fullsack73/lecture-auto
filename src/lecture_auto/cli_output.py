@@ -213,12 +213,16 @@ def _render_transcript_refine(payload: dict[str, Any], message: str) -> str:
 
 def _render_summarize(payload: dict[str, Any], message: str) -> str:
     preview = bool(payload.get("preview"))
+    material = payload.get("material_file_path")
+    material_line = f"- Materials Used: {material}\n" if material else ""
+
     if preview:
         return (
             "Summary Preview\n"
             f"- Session ID: {payload['session_id']}\n"
             f"- Template: {payload.get('template')}\n"
             f"- Source Transcript: {payload.get('source_transcript')}\n"
+            f"{material_line}"
             "- Notes:\n"
             f"{message}"
         )
@@ -228,6 +232,7 @@ def _render_summarize(payload: dict[str, Any], message: str) -> str:
         f"- Session ID: {payload['session_id']}\n"
         f"- Template: {payload.get('template')}\n"
         f"- Source Transcript: {payload.get('source_transcript')}\n"
+        f"{material_line}"
         f"- Note Path: {payload.get('note_file_path')}\n"
         "- Next: Re-run summarize with --template to regenerate"
     )
