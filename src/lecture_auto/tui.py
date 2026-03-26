@@ -47,9 +47,10 @@ def _echo_error(command: str, exc: SessionCommandError) -> None:
     typer.echo(format_command_error(command, exc, as_json=False))
 
 
-def _ask(message: str, default: str = "") -> str | None:
+def _ask(message: str, default: object = "") -> str | None:
     """Single-line text prompt. Returns None if user cancels (Ctrl+C)."""
-    return questionary.text(message, default=default, style=STYLE).ask()
+    normalized_default = "" if default is None else str(default)
+    return questionary.text(message, default=normalized_default, style=STYLE).ask()
 
 
 def _select(message: str, choices: list) -> str | None:

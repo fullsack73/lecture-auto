@@ -86,6 +86,7 @@ class GeminiLLMAdapter:
             "and awkward wording. You must preserve the original lecture meaning and terminology entirely. "
             f"{lang_prompt}"
             "Only output the refined text, without any conversational padding."
+            "Try to preserve original source's form and it's content as best as possible."
         )
 
         chunk_size = self.config.chunk_size
