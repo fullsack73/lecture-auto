@@ -150,6 +150,17 @@ class SessionService:
         if not Path(resolved_audio_path).is_absolute():
             runtime_output_path = str((metadata_root / resolved_audio_path).resolve())
 
+        append_mode = False
+        original_output_path = runtime_output_path
+        p_out = Path(runtime_output_path)
+        if p_out.exists():
+            append_mode = True
+            part_suffix = f"-part{p_out.suffix}"
+            runtime_output_path = str(p_out.with_name(f"{p_out.stem}{part_suffix}"))
+            part_p = Path(runtime_output_path)
+            if part_p.exists():
+                part_p.unlink(missing_ok=True)
+
         try:
             handle = self.runtime_adapter.start_capture(
                 session_id=session_id,
@@ -165,9 +176,14 @@ class SessionService:
             raise self.map_capture_failure("runtime") from exc
 
         session["audio_file_path"] = resolved_audio_path
-        session["timestamps"]["recording_started_at"] = self._utc_now()
+        session.setdefault("timestamps", {})["recording_started_at"] = self._utc_now()
         session["timestamps"]["capture_process_id"] = handle.process_id
         session["timestamps"]["capture_backend"] = handle.backend
+        
+        if append_mode:
+            session["timestamps"]["active_part_path"] = runtime_output_path
+        else:
+            session["timestamps"].pop("active_part_path", None)
 
         saved = self._persist_or_raise(session)
         return CommandResult(
@@ -202,6 +218,29 @@ class SessionService:
             raise self.map_capture_failure("device") from exc
         except CaptureRuntimeError as exc:
             raise self.map_capture_failure("runtime") from exc
+
+        active_part_path_raw = session.get("timestamps", {}).pop("active_part_path", None)
+        active_part_path = str(active_part_path_raw) if active_part_path_raw else None
+
+        if success and active_part_path:
+            base_audio_path = session.get("audio_file_path")
+            metadata_root = self.store.metadata_file.parent.parent
+            if base_audio_path and not Path(base_audio_path).is_absolute():
+                base_audio_path_abs: str | None = str((metadata_root / base_audio_path).resolve())
+            else:
+                base_audio_path_abs = base_audio_path
+
+            if base_audio_path_abs:
+                try:
+                    self._concat_audio(base_path=base_audio_path_abs, part_path=active_part_path)
+                except Exception as exc:
+                    success = False
+
+        if not success and active_part_path and Path(active_part_path).exists():
+            try:
+                Path(active_part_path).unlink()
+            except OSError:
+                pass
 
         final_state = "completed" if success else "failed"
         self._transition_or_raise(session, target_state=final_state)
@@ -488,6 +527,60 @@ class SessionService:
             payload=saved,
             message=f"Material imported successfully for session '{session_id}'.",
         )
+
+    def _concat_audio(self, base_path: str, part_path: str) -> None:
+        import subprocess
+        import os
+        from tempfile import NamedTemporaryFile
+        from pathlib import Path
+        import uuid
+
+        base_p = Path(base_path)
+        part_p = Path(part_path)
+        
+        if not base_p.exists() or not part_p.exists():
+            return
+
+        merged_p = base_p.with_name(f"{base_p.stem}-merged-{uuid.uuid4().hex[:6]}{base_p.suffix}")
+
+        try:
+            with NamedTemporaryFile(mode="w", suffix=".txt", delete=False, encoding="utf-8") as f:
+                f.write(f"file '{base_p.absolute().as_posix()}'\n")
+                f.write(f"file '{part_p.absolute().as_posix()}'\n")
+                list_file_path = f.name
+                
+            cmd = [
+                "ffmpeg",
+                "-y",
+                "-f", "concat",
+                "-safe", "0",
+                "-i", list_file_path,
+                "-c", "copy",
+                str(merged_p)
+            ]
+            
+            subprocess.run(
+                cmd,
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            
+            os.replace(str(merged_p), str(base_p))
+            part_p.unlink(missing_ok=True)
+            
+        except Exception as exc:
+            if merged_p.exists():
+                merged_p.unlink(missing_ok=True)
+            raise SessionCommandError(
+                code="CONCAT_FAILED",
+                message=f"Failed to merge new recording part: {exc}",
+                guidance="Check ffmpeg and file permissions.",
+                exit_code=1,
+            ) from exc
+        finally:
+            if 'list_file_path' in locals() and os.path.exists(list_file_path):
+                os.remove(list_file_path)
 
     def retry_import_audio(self, session_id: str) -> CommandResult:
         session = self._require_session(session_id)
@@ -928,8 +1021,9 @@ class SessionService:
         sessions = self.store.load_all()
         session = None
         for row in sessions:
+            title = row.get("title")
             if row["session_id"] == session_reference or \
-               (row.get("title") and row.get("title").lower() == session_reference.lower()):
+               (isinstance(title, str) and title.lower() == session_reference.lower()):
                 session = row
                 break
         
@@ -1004,7 +1098,7 @@ class SessionService:
         sessions = self.store.load_all()
         session = next(
             (r for r in sessions if r["session_id"] == session_reference or 
-             (r.get("title") and r.get("title").lower() == session_reference.lower())),
+             (isinstance(r.get("title"), str) and r["title"].lower() == session_reference.lower())),
             None
         )
 

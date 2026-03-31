@@ -30,7 +30,7 @@ class FasterWhisperSTTRuntimeAdapter:
             return self._model
 
         try:
-            from faster_whisper import WhisperModel
+            from faster_whisper import WhisperModel  # type: ignore
         except ImportError as exc:
             raise STTConfigError(
                 "faster-whisper is not installed. Run: pip install faster-whisper"

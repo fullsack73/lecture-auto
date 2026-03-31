@@ -10,6 +10,7 @@ import json
 import os
 import time
 from pathlib import Path
+from typing import Any
 
 import questionary
 import typer
@@ -344,7 +345,7 @@ def _menu_session_detail(service, session_id: str) -> None:
 
         elif choice == "import_material":
             material_path = _ask("Path to PDF material file:", default="")
-            if not material_path.strip():
+            if not material_path or not material_path.strip():
                 typer.secho("Import cancelled.", fg=typer.colors.YELLOW)
             else:
                 try:
@@ -396,7 +397,7 @@ def _edit_session_metadata(service, session_id: str) -> str:
 
         selected = _select("Select a field to edit", choices)
 
-        if selected in (None, "__cancel__"):
+        if selected is None or selected == "__cancel__":
             typer.echo("Edit cancelled.")
             return session_id
 
@@ -507,7 +508,7 @@ def _menu_summarize(service) -> None:
 
     try:
         templates = service.list_note_templates()
-    except Exception as exc:
+    except SessionCommandError as exc:
         _echo_error("summarize", exc)
         return
 
@@ -598,8 +599,8 @@ def _menu_library(service) -> None:
             sort_choice = _select(
                 "Sort order?",
                 [
-                    questionary.Choice("Default (by date)", False),
-                    questionary.Choice("Most recent activity first", True),
+                    questionary.Choice("Default (by date)", "False"),
+                    questionary.Choice("Most recent activity first", "True"),
                 ],
             )
             if sort_choice is None:
@@ -610,7 +611,7 @@ def _menu_library(service) -> None:
                     from_date=from_date.strip() or None,
                     to_date=to_date.strip() or None,
                     status_filter=status_choice or None,
-                    sort_recent=sort_choice,
+                    sort_recent=(sort_choice == "True"),
                 )
                 _echo_result(result)
             except SessionCommandError as exc:
@@ -716,7 +717,7 @@ def _menu_config() -> bool:
             fields = [item for item in field_groups if isinstance(item, tuple)]
 
             while True:
-                choices = []
+                choices: list[Any] = []
                 for item in field_groups:
                     if isinstance(item, str):
                         # Section separator

@@ -71,12 +71,12 @@ class GeminiLLMAdapter:
             return raw_text
 
         try:
-            from google.api_core.exceptions import PermissionDenied, DeadlineExceeded
-            from google.genai import types
+            from google.api_core.exceptions import PermissionDenied, DeadlineExceeded  # type: ignore
+            from google.genai import types  # type: ignore
         except ImportError:
-            PermissionDenied = Exception
-            DeadlineExceeded = Exception
-            types = None
+            PermissionDenied = Exception  # type: ignore
+            DeadlineExceeded = Exception  # type: ignore
+            types = None  # type: ignore
 
         topic_prompt = f"The overall topic or subject is '{context_topic}'. " if context_topic else ""
         lang_prompt = f"Output your response entirely in {self.config.language}. " if self.config.language else ""
@@ -106,16 +106,16 @@ class GeminiLLMAdapter:
                 
                 prompt = f"Refine the following text:\n{chunk}"
 
-                config_dict = {"system_instruction": system_instructions}
+                config_dict: dict = {"system_instruction": system_instructions}
                 if types:
                     config_dict["thinking_config"] = types.ThinkingConfig(
-                        thinking_level=self.config.thinking_level
+                        thinking_level=self.config.thinking_level  # type: ignore
                     )
 
                 response = self.client.models.generate_content(
                     model=self._normalize_model_name(self.config.model_name),
                     contents=prompt,
-                    config=config_dict,
+                    config=config_dict,  # type: ignore
                 )
                 text = (getattr(response, "text", "") or "").strip()
                 refined_chunks.append(text)
@@ -150,12 +150,12 @@ class GeminiLLMAdapter:
             return transcript
 
         try:
-            from google.api_core.exceptions import PermissionDenied, DeadlineExceeded
-            from google.genai import types
+            from google.api_core.exceptions import PermissionDenied, DeadlineExceeded  # type: ignore
+            from google.genai import types  # type: ignore
         except ImportError:
-            PermissionDenied = Exception
-            DeadlineExceeded = Exception
-            types = None
+            PermissionDenied = Exception  # type: ignore
+            DeadlineExceeded = Exception  # type: ignore
+            types = None  # type: ignore
 
         topic_prompt = f"The lecture topic is '{context_topic}'. " if context_topic else ""
         lang_prompt = f"Output your response entirely in {self.config.language}. " if self.config.language else ""
@@ -173,7 +173,7 @@ class GeminiLLMAdapter:
                 f"Transcript:\n{transcript}\n"
             )
 
-            contents = [prompt]
+            contents: list = [prompt]
             uploaded_file = None
 
             if material_path:
@@ -183,20 +183,20 @@ class GeminiLLMAdapter:
                     contents.append(uploaded_file)
                     system_instructions += " A lecture material PDF has been provided as context. Please actively refer to it for accurately capturing terminology and overall structure."
             
-            config_dict = {"system_instruction": system_instructions}
+            config_dict: dict = {"system_instruction": system_instructions}
             if types:
                 config_dict["thinking_config"] = types.ThinkingConfig(
-                    thinking_level=self.config.thinking_level
+                    thinking_level=self.config.thinking_level  # type: ignore
                 )
 
             try:
                 response = self.client.models.generate_content(
                     model=self._normalize_model_name(self.config.model_name),
                     contents=contents,
-                    config=config_dict,
+                    config=config_dict,  # type: ignore
                 )
             finally:
-                if uploaded_file:
+                if uploaded_file and hasattr(uploaded_file, "name") and uploaded_file.name:
                     try:
                         self.client.files.delete(name=uploaded_file.name)
                     except Exception:

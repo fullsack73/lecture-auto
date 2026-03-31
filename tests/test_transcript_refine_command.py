@@ -51,7 +51,7 @@ def test_refine_falls_back_to_raw_when_edited_missing(service: SessionService) -
     
     assert result.command == "transcript refine"
     assert result.payload["target_used"] == "raw"
-    service.llm_adapter.refine_transcript.assert_called_once_with(
+    service.llm_adapter.refine_transcript.assert_called_once_with(  # type: ignore
         "Hello, this  is a raw transcript... It needs    refinement.",
         context_topic="Introduction to AI"
     )
@@ -69,7 +69,7 @@ def test_refine_uses_edited_when_present(service: SessionService) -> None:
     result = service.transcript_refine("test-session-1")
     
     assert result.payload["target_used"] == "edited"
-    service.llm_adapter.refine_transcript.assert_called_once_with(
+    service.llm_adapter.refine_transcript.assert_called_once_with(  # type: ignore
         "This is an existing edited transcript.",
         context_topic="Introduction to AI"
     )
@@ -84,7 +84,7 @@ def test_refine_forces_raw_with_flag_even_if_edited_present(service: SessionServ
     result = service.transcript_refine("test-session-1", raw=True)
     
     assert result.payload["target_used"] == "raw"
-    service.llm_adapter.refine_transcript.assert_called_once_with(
+    service.llm_adapter.refine_transcript.assert_called_once_with(  # type: ignore
         "Hello, this  is a raw transcript... It needs    refinement.",
         context_topic="Introduction to AI"
     )
@@ -92,7 +92,7 @@ def test_refine_forces_raw_with_flag_even_if_edited_present(service: SessionServ
 
 
 def test_refine_handles_llm_network_error(service: SessionService) -> None:
-    service.llm_adapter.refine_transcript.side_effect = LLMTransientNetworkError("Network down")
+    service.llm_adapter.refine_transcript.side_effect = LLMTransientNetworkError("Network down")  # type: ignore
     
     with pytest.raises(SessionCommandError, match="Network down") as exc_info:
         service.transcript_refine("test-session-1")
@@ -126,7 +126,7 @@ def test_refine_uses_raw_when_raw_is_newer(service: SessionService) -> None:
     result = service.transcript_refine("test-session-1")
     
     assert result.payload["target_used"] == "raw"
-    service.llm_adapter.refine_transcript.assert_called_once_with(
+    service.llm_adapter.refine_transcript.assert_called_once_with(  # type: ignore
         "This is the new raw transcript that is newer.",
         context_topic="Introduction to AI"
     )

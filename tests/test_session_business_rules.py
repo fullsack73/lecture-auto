@@ -212,6 +212,7 @@ def test_update_session_id_renames_files_on_disk(tmp_path: Path) -> None:
 
     # Manually set audio_file_path in metadata
     raw = service.store.get_by_session_id("session-303")
+    assert raw is not None
     raw["audio_file_path"] = audio_rel
     service.store.upsert(raw)
 
@@ -247,6 +248,7 @@ def test_update_session_id_file_rename_failure_raises_error(tmp_path: Path, monk
     audio_abs.write_bytes(b"audio-data")
 
     raw = service.store.get_by_session_id("session-306")
+    assert raw is not None
     raw["audio_file_path"] = audio_rel
     service.store.upsert(raw)
 

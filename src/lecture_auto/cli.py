@@ -122,7 +122,7 @@ def _build_service() -> SessionService:
             resolved_audio_gain = 1.0
 
     stt_config = STTConfig(
-        mode=os.environ.get("STT_MODE") or config_stt_mode or "api",
+        mode=cast(Literal["local", "api"], os.environ.get("STT_MODE") or config_stt_mode or "api"),
         api_provider=os.environ.get("STT_API_PROVIDER") or config_stt_api_provider or "openai-compatible",
         api_key=os.environ.get("STT_API_KEY") or config_stt_api_key,
         local_model_name=os.environ.get("STT_LOCAL_MODEL") or config_stt_local_model or "base",
@@ -143,7 +143,9 @@ def _build_service() -> SessionService:
     )
 
 
-def _run_or_exit(command: str, as_json: bool, action: callable) -> None:
+from typing import Callable, Any, cast, Literal
+
+def _run_or_exit(command: str, as_json: bool, action: Callable[..., Any]) -> None:
     try:
         result = action()
     except SessionCommandError as exc:
@@ -241,7 +243,7 @@ def session_import_material(
     as_json: bool = typer.Option(False, "--json", help="Render output as JSON"),
 ) -> None:
     """Import a PDF lecture material into a session."""
-    service = _build_session_service()
+    service = _build_service()
     _run_or_exit(
         "material import",
         as_json,
