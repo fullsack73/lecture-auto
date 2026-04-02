@@ -214,7 +214,7 @@ def test_audio_gain_default_is_noop_and_uses_original_path(tmp_path: Path) -> No
 
     assert adapter.seen_audio_path == "recordings/session-1007-imported.wav"
     assert result.payload["transcription_progress"]["audio_amplification_applied"] is False
-    assert result.payload["transcription_progress"]["audio_gain_multiplier"] == 1.0
+    assert result.payload["transcription_progress"]["use_dynaudnorm"] is False
 
 
 def test_audio_gain_above_one_uses_amplified_temp_path(tmp_path: Path) -> None:
@@ -237,7 +237,8 @@ def test_audio_gain_above_one_uses_amplified_temp_path(tmp_path: Path) -> None:
             mode="api",
             api_provider="fake",
             api_key="k",
-            audio_gain_multiplier=1.5,
+            use_dynaudnorm=True,
+            dynaudnorm_f=100,
         ),
         api_adapter=adapter,
     )
@@ -254,4 +255,4 @@ def test_audio_gain_above_one_uses_amplified_temp_path(tmp_path: Path) -> None:
 
     assert adapter.seen_audio_path == "/tmp/amplified-input.wav"
     assert result.payload["transcription_progress"]["audio_amplification_applied"] is True
-    assert result.payload["transcription_progress"]["audio_gain_multiplier"] == 1.5
+    assert result.payload["transcription_progress"]["dynaudnorm_f"] == 100

@@ -20,7 +20,9 @@ class STTConfig:
     diarization: bool = False
     google_project_id: str | None = None
     google_location: str = "us"
-    audio_gain_multiplier: float = 1.0
+    use_dynaudnorm: bool = False
+    dynaudnorm_f: int | None = None
+    dynaudnorm_g: int | None = None
 
     def validate(self) -> None:
         if self.mode not in {"local", "api"}:
@@ -41,7 +43,7 @@ class STTConfig:
             if not self.local_model_name or not self.local_model_name.strip():
                 raise ValueError("Local model name is required when STT mode is 'local'.")
 
-        if self.audio_gain_multiplier < 1.0:
-            raise ValueError("audio_gain_multiplier must be at least 1.0.")
-        if self.audio_gain_multiplier > 4.0:
-            raise ValueError("audio_gain_multiplier must be at most 4.0.")
+        if self.dynaudnorm_f is not None and (self.dynaudnorm_f < 10 or self.dynaudnorm_f > 8000):
+            raise ValueError("dynaudnorm_f must be between 10 and 8000.")
+        if self.dynaudnorm_g is not None and (self.dynaudnorm_g < 3 or self.dynaudnorm_g > 301 or self.dynaudnorm_g % 2 == 0):
+            raise ValueError("dynaudnorm_g must be an odd integer between 3 and 301.")

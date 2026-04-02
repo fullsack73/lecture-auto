@@ -15,20 +15,32 @@ class AudioAmplificationError(RuntimeError):
 def amplified_audio_input(
     *,
     audio_path: str,
-    gain_multiplier: float,
+    use_dynaudnorm: bool = False,
+    dynaudnorm_f: int | None = None,
+    dynaudnorm_g: int | None = None,
     ffmpeg_bin: str = "ffmpeg",
 ) -> Iterator[str]:
     """Yield an audio path suitable for STT, amplifying input when needed.
 
-    When gain is 1.0, this yields the original path with no side effects.
+    When use_dynaudnorm is False, this yields the original path with no side effects.
     """
-    if gain_multiplier <= 1.0:
+    if not use_dynaudnorm:
         yield audio_path
         return
 
     source = Path(audio_path)
     if not source.exists():
         raise AudioAmplificationError(f"Audio file does not exist: {audio_path}")
+
+    filter_opts = []
+    if dynaudnorm_f is not None:
+        filter_opts.append(f"f={dynaudnorm_f}")
+    if dynaudnorm_g is not None:
+        filter_opts.append(f"g={dynaudnorm_g}")
+    
+    dynaudnorm_str = "dynaudnorm"
+    if filter_opts:
+        dynaudnorm_str += "=" + ":".join(filter_opts)
 
     with tempfile.TemporaryDirectory(prefix="lecture_auto_amp_") as tmp_dir:
         output_path = Path(tmp_dir) / "amplified.wav"
@@ -38,7 +50,7 @@ def amplified_audio_input(
             "-i",
             str(source),
             "-filter:a",
-            f"volume={gain_multiplier}",
+            dynaudnorm_str,
             "-c:a",
             "pcm_s16le",
             str(output_path),

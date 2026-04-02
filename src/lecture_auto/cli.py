@@ -66,7 +66,9 @@ def _build_service() -> SessionService:
     config_capture_source = None
     config_google_project_id = None
     config_google_location = None
-    config_audio_gain = None
+    config_use_dynaudnorm = False
+    config_dynaudnorm_f = None
+    config_dynaudnorm_g = None
     config_path = _get_global_config_path()
     
     if config_path.exists():
@@ -87,7 +89,9 @@ def _build_service() -> SessionService:
                 config_capture_source = config_data.get("capture_source")
                 config_google_project_id = config_data.get("google_project_id")
                 config_google_location = config_data.get("google_location")
-                config_audio_gain = config_data.get("audio_gain")
+                config_use_dynaudnorm = config_data.get("use_dynaudnorm", False)
+                config_dynaudnorm_f = config_data.get("dynaudnorm_f")
+                config_dynaudnorm_g = config_data.get("dynaudnorm_g")
         except Exception:
             pass
 
@@ -126,12 +130,21 @@ def _build_service() -> SessionService:
         except (LLMConfigError, ValueError):
             llm_adapter = None
 
-    resolved_audio_gain = 1.0
-    if config_audio_gain is not None:
+    resolved_dynaudnorm_f = None
+    if config_dynaudnorm_f is not None:
         try:
-            resolved_audio_gain = float(config_audio_gain)
+            resolved_dynaudnorm_f = int(config_dynaudnorm_f)
         except (TypeError, ValueError):
-            resolved_audio_gain = 1.0
+            pass
+
+    resolved_dynaudnorm_g = None
+    if config_dynaudnorm_g is not None:
+        try:
+            resolved_dynaudnorm_g = int(config_dynaudnorm_g)
+        except (TypeError, ValueError):
+            pass
+
+    resolved_use_dynaudnorm = bool(os.environ.get("USE_DYNAUDNORM") or config_use_dynaudnorm)
 
     stt_config = STTConfig(
         mode=cast(Literal["local", "api"], os.environ.get("STT_MODE") or config_stt_mode or "api"),
@@ -141,7 +154,9 @@ def _build_service() -> SessionService:
         language=config_stt_language,
         google_project_id=os.environ.get("GOOGLE_PROJECT_ID") or config_google_project_id,
         google_location=os.environ.get("GOOGLE_LOCATION") or config_google_location or "us",
-        audio_gain_multiplier=resolved_audio_gain,
+        use_dynaudnorm=resolved_use_dynaudnorm,
+        dynaudnorm_f=resolved_dynaudnorm_f,
+        dynaudnorm_g=resolved_dynaudnorm_g,
     )
 
     return SessionService(
@@ -343,7 +358,9 @@ def config_set(
     audio_format: str | None = typer.Option(None, "--audio-format", help="Default audio format for recordings (wav or mp3)"),
     capture_source: str | None = typer.Option(None, "--capture-source", help="Capture source (microphone or system_audio)"),
     google_project_id: str | None = typer.Option(None, "--google-project-id", help="Google Cloud project ID (required for google-chirp3 STT provider)"),
-    audio_gain: float | None = typer.Option(None, "--audio-gain", help="STT pre-processing gain multiplier (1.0 to 4.0)."),
+    use_dynaudnorm: bool | None = typer.Option(None, "--use-dynaudnorm/--no-use-dynaudnorm", help="Apply dynaudnorm audio filter during STT pre-processing."),
+    dynaudnorm_f: int | None = typer.Option(None, "--dynaudnorm-f", help="dynaudnorm 'f' parameter (10 to 8000)."),
+    dynaudnorm_g: int | None = typer.Option(None, "--dynaudnorm-g", help="dynaudnorm 'g' parameter (odd integer 3 to 301)."),
 ) -> None:
     config_path = _get_global_config_path()
     config_data = {}
@@ -453,12 +470,25 @@ def config_set(
         typer.echo(f"Google Cloud project ID set to: {config_data['google_project_id']}")
         updated = True
 
-    if audio_gain is not None:
-        if audio_gain < 1.0 or audio_gain > 4.0:
-            typer.echo("Audio gain must be between 1.0 and 4.0.", err=True)
+    if use_dynaudnorm is not None:
+        config_data["use_dynaudnorm"] = use_dynaudnorm
+        typer.echo(f"Global use_dynaudnorm set to: {config_data['use_dynaudnorm']}")
+        updated = True
+
+    if dynaudnorm_f is not None:
+        if dynaudnorm_f < 10 or dynaudnorm_f > 8000:
+            typer.echo("dynaudnorm_f must be between 10 and 8000.", err=True)
             raise typer.Exit(code=1)
-        config_data["audio_gain"] = audio_gain
-        typer.echo(f"Global STT audio gain set to: {config_data['audio_gain']}")
+        config_data["dynaudnorm_f"] = dynaudnorm_f
+        typer.echo(f"Global dynaudnorm_f set to: {config_data['dynaudnorm_f']}")
+        updated = True
+
+    if dynaudnorm_g is not None:
+        if dynaudnorm_g < 3 or dynaudnorm_g > 301 or dynaudnorm_g % 2 == 0:
+            typer.echo("dynaudnorm_g must be an odd integer between 3 and 301.", err=True)
+            raise typer.Exit(code=1)
+        config_data["dynaudnorm_g"] = dynaudnorm_g
+        typer.echo(f"Global dynaudnorm_g set to: {config_data['dynaudnorm_g']}")
         updated = True
 
     if not updated:

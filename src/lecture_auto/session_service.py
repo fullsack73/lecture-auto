@@ -714,14 +714,18 @@ class SessionService:
 
         transcript_text: str | None = None
         transcript_result = None
-        gain = self.stt_config.audio_gain_multiplier
+        use_dyn = self.stt_config.use_dynaudnorm
+        f = self.stt_config.dynaudnorm_f
+        g = self.stt_config.dynaudnorm_g
         source_for_amplification = self._resolve_audio_input_path(audio_relative_path)
         amplification_context = (
             amplified_audio_input(
                 audio_path=source_for_amplification,
-                gain_multiplier=gain,
+                use_dynaudnorm=use_dyn,
+                dynaudnorm_f=f,
+                dynaudnorm_g=g,
             )
-            if gain > 1.0
+            if use_dyn
             else nullcontext(adapter_audio_path)
         )
 
@@ -764,7 +768,7 @@ class SessionService:
 
         output_text = transcript_text or ""
         if transcript_result and transcript_result.segments:
-            output_text = transcript_result.to_plain_text()
+            output_text = transcript_result.to_diarized_markdown()
 
         transcript_relative_path = self.store.build_raw_transcript_path(
             session_id,
@@ -799,8 +803,10 @@ class SessionService:
             "attempt": attempt,
             "retry_limit": retry_limit,
             "mode": mode,
-            "audio_gain_multiplier": gain,
-            "audio_amplification_applied": gain > 1.0,
+            "use_dynaudnorm": use_dyn,
+            "dynaudnorm_f": f,
+            "dynaudnorm_g": g,
+            "audio_amplification_applied": use_dyn,
             "transcript_file_path": transcript_relative_path,
         }
 

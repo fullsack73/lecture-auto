@@ -696,7 +696,9 @@ def _menu_config() -> bool:
                 ("workspace", "Workspace directory"),
                 ("audio_format", "Audio format (wav or mp3)"),
                 ("capture_source", "Capture source (microphone or system_audio)"),
-                ("audio_gain", "STT audio gain multiplier (1.0 to 4.0)"),
+                ("use_dynaudnorm", "Use dynaudnorm filter (True or False)"),
+                ("dynaudnorm_f", "dynaudnorm f parameter (10-8000)"),
+                ("dynaudnorm_g", "dynaudnorm g parameter (odd 3-301)"),
                 "── STT (Speech-to-Text) ──",
                 ("stt_mode", "STT mode (api or local)"),
                 ("stt_language", "STT language (e.g. ko)"),
@@ -796,16 +798,33 @@ def _menu_config() -> bool:
                     if selected_key == "stt_mode" and value not in ("api", "local"):
                         typer.echo("Invalid STT mode. Must be 'api' or 'local'. Skipping.")
                         continue
-                    if selected_key == "audio_gain":
+                    if selected_key == "use_dynaudnorm":
+                        if value.lower() not in ("true", "false", "1", "0", "yes", "no"):
+                            typer.echo("Invalid boolean for use_dynaudnorm. Skipping.")
+                            continue
+                        data[selected_key] = value.lower() in ("true", "1", "yes")
+                        updated = True
+                        continue
+                    if selected_key == "dynaudnorm_f":
                         try:
-                            numeric_value = float(value)
+                            numeric_value_f = int(value)
+                            if numeric_value_f < 10 or numeric_value_f > 8000:
+                                raise ValueError()
                         except ValueError:
-                            typer.echo("Invalid audio gain. Must be a number between 1.0 and 4.0. Skipping.")
+                            typer.echo("Invalid f parameter. Must be between 10 and 8000. Skipping.")
                             continue
-                        if numeric_value < 1.0 or numeric_value > 4.0:
-                            typer.echo("Invalid audio gain. Must be a number between 1.0 and 4.0. Skipping.")
+                        data[selected_key] = numeric_value_f
+                        updated = True
+                        continue
+                    if selected_key == "dynaudnorm_g":
+                        try:
+                            numeric_value_g = int(value)
+                            if numeric_value_g < 3 or numeric_value_g > 301 or numeric_value_g % 2 == 0:
+                                raise ValueError()
+                        except ValueError:
+                            typer.echo("Invalid g parameter. Must be an odd integer between 3 and 301. Skipping.")
                             continue
-                        data[selected_key] = numeric_value
+                        data[selected_key] = numeric_value_g
                         updated = True
                         continue
                     if selected_key == "workspace":

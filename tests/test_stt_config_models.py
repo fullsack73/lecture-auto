@@ -27,25 +27,25 @@ def test_stt_config_diarization_enabled() -> None:
     assert config.diarization is True
 
 
-def test_stt_config_audio_gain_defaults_to_one() -> None:
+def test_stt_config_dynaudnorm_defaults_to_false() -> None:
     config = STTConfig()
-    assert config.audio_gain_multiplier == 1.0
+    assert config.use_dynaudnorm is False
 
 
-def test_stt_config_audio_gain_accepts_upper_boundary() -> None:
-    config = STTConfig(mode="local", local_model_name="base", audio_gain_multiplier=4.0)
+def test_stt_config_dynaudnorm_accepts_valid_params() -> None:
+    config = STTConfig(mode="local", local_model_name="base", use_dynaudnorm=True, dynaudnorm_f=100, dynaudnorm_g=31)
     config.validate()
 
 
-def test_stt_config_audio_gain_rejects_below_one() -> None:
-    config = STTConfig(mode="local", local_model_name="base", audio_gain_multiplier=0.9)
-    with pytest.raises(ValueError, match="at least 1.0"):
+def test_stt_config_dynaudnorm_rejects_invalid_f() -> None:
+    config = STTConfig(mode="local", local_model_name="base", dynaudnorm_f=5)
+    with pytest.raises(ValueError, match="10 and 8000"):
         config.validate()
 
 
-def test_stt_config_audio_gain_rejects_above_upper_boundary() -> None:
-    config = STTConfig(mode="local", local_model_name="base", audio_gain_multiplier=4.1)
-    with pytest.raises(ValueError, match="at most 4.0"):
+def test_stt_config_dynaudnorm_rejects_invalid_g_even() -> None:
+    config = STTConfig(mode="local", local_model_name="base", dynaudnorm_g=30)
+    with pytest.raises(ValueError, match="odd integer"):
         config.validate()
 
 

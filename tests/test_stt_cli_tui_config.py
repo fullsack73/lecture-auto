@@ -130,41 +130,42 @@ def test_build_service_env_overrides_llm_model_and_thinking(tmp_path: Path, monk
     assert used_config.thinking_level == "low"
 
 
-def test_cli_config_set_persists_audio_gain(tmp_path: Path, monkeypatch) -> None:
+def test_cli_config_set_persists_dynaudnorm(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
 
-    result = runner.invoke(app, ["config", "set", "--audio-gain", "1.6"])
+    result = runner.invoke(app, ["config", "set", "--dynaudnorm-f", "200"])
 
     assert result.exit_code == 0
     config_data = json.loads(_config_path(tmp_path).read_text(encoding="utf-8"))
-    assert config_data["audio_gain"] == 1.6
+    assert config_data["dynaudnorm_f"] == 200
 
 
-def test_cli_config_set_rejects_out_of_range_audio_gain(tmp_path: Path, monkeypatch) -> None:
+def test_cli_config_set_rejects_out_of_range_dynaudnorm_f(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
 
-    result = runner.invoke(app, ["config", "set", "--audio-gain", "0.8"])
+    result = runner.invoke(app, ["config", "set", "--dynaudnorm-f", "5"])
 
     assert result.exit_code == 1
-    assert "Audio gain must be between 1.0 and 4.0." in (result.output or "")
+    assert "dynaudnorm_f must be between 10 and 8000" in (result.output or "")
 
 
-def test_build_service_loads_audio_gain_from_config(tmp_path: Path, monkeypatch) -> None:
+def test_build_service_loads_dynaudnorm_from_config(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
 
     config_path = _config_path(tmp_path)
     config_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.write_text(
-        json.dumps({"audio_gain": 1.8}),
+        json.dumps({"use_dynaudnorm": True, "dynaudnorm_f": 100}),
         encoding="utf-8",
     )
 
     service = _build_service()
 
-    assert service.stt_config.audio_gain_multiplier == 1.8
+    assert service.stt_config.use_dynaudnorm is True
+    assert service.stt_config.dynaudnorm_f == 100
 
 
-def test_tui_menu_config_saves_audio_gain(monkeypatch) -> None:
+def test_tui_menu_config_saves_dynaudnorm(monkeypatch) -> None:
     saved: dict = {}
 
     def _save(data: dict) -> None:
@@ -175,13 +176,13 @@ def test_tui_menu_config_saves_audio_gain(monkeypatch) -> None:
         with patch("lecture_auto.tui._save_config", side_effect=_save):
             with patch(
                 "lecture_auto.tui._select",
-                side_effect=["set", "audio_gain", "__save__", "__back__"],
+                side_effect=["set", "use_dynaudnorm", "__save__", "__back__"],
             ):
-                with patch("lecture_auto.tui._ask", return_value="1.5"):
+                with patch("lecture_auto.tui._ask", return_value="True"):
                     changed = _menu_config()
 
     assert changed is True
-    assert saved["audio_gain"] == 1.5
+    assert saved["use_dynaudnorm"] is True
 
 
 def test_tui_menu_config_saves_stt_mode(monkeypatch) -> None:
