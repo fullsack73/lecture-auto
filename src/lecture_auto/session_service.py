@@ -764,7 +764,7 @@ class SessionService:
 
         output_text = transcript_text or ""
         if transcript_result and transcript_result.segments:
-            output_text = transcript_result.to_diarized_markdown()
+            output_text = transcript_result.to_plain_text()
 
         transcript_relative_path = self.store.build_raw_transcript_path(
             session_id,

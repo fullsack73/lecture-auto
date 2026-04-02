@@ -42,6 +42,14 @@ class STTResult:
     language: str | None = None
     segments: list[DiarizedSegment] = field(default_factory=list)
 
+    def to_plain_text(self) -> str:
+        """Return a horizontal plain-text transcript."""
+        if not self.segments:
+            return self.transcript_text
+
+        text_parts = [seg.text.strip() for seg in self.segments if seg.text.strip()]
+        return " ".join(text_parts).strip()
+
     def to_diarized_markdown(self) -> str:
         """Format transcription with speaker diarization as Markdown."""
         if not self.segments:

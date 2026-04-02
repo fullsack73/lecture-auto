@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 
 import pytest
 
@@ -53,7 +54,10 @@ def test_transcription_writes_raw_transcript_file_under_transcripts_folder(tmp_p
 
     transcript = tmp_path / "transcripts" / "session-1202-raw.md"
     assert transcript.exists()
-    assert "transcript for recordings/session-1202-imported.wav" in transcript.read_text(encoding="utf-8")
+    content = transcript.read_text(encoding="utf-8")
+    assert "transcript for recordings/session-1202-imported.wav" in content
+    assert not re.search(r"\[\d{2}:\d{2} - \d{2}:\d{2}\]", content)
+    assert "\n" not in content.strip()
 
 
 def test_api_transient_failures_stop_after_retry_cap_and_return_category_error(tmp_path: Path) -> None:
