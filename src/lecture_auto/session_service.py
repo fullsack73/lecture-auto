@@ -505,16 +505,42 @@ class SessionService:
             course=session.get("course"),
         )
         
+        metadata_root = self.store.metadata_file.parent.parent
+        existing_material = session.get("material_file_path")
+        
         try:
-            self._copy_import_audio(
-                source_path=normalized_source_path,
-                destination_relative_path=persisted_path,
-            )
+            merged = False
+            if existing_material:
+                existing_path = metadata_root / existing_material
+                if existing_path.exists() and existing_path.suffix.lower() == ".pdf":
+                    self._merge_pdfs(
+                        str(existing_path), 
+                        normalized_source_path, 
+                        str(metadata_root / persisted_path)
+                    )
+                    merged = True
+                else:
+                    self._copy_import_audio(
+                        source_path=normalized_source_path,
+                        destination_relative_path=persisted_path,
+                    )
+            else:
+                self._copy_import_audio(
+                    source_path=normalized_source_path,
+                    destination_relative_path=persisted_path,
+                )
         except OSError as exc:
             raise SessionCommandError(
                 code="IMPORT_MATERIAL_COPY_ERROR",
-                message=f"Failed to copy material file: {str(exc)}",
+                message=f"Failed to copy or merge material file: {str(exc)}",
                 guidance="Check file permissions and try again.",
+                exit_code=1,
+            )
+        except RuntimeError as exc:
+            raise SessionCommandError(
+                code="IMPORT_MATERIAL_DEPENDENCY_ERROR",
+                message=str(exc),
+                guidance="Install missing dependencies to merge PDFs.",
                 exit_code=1,
             )
 
@@ -522,10 +548,11 @@ class SessionService:
         session.setdefault("timestamps", {})["material_imported_at"] = self._utc_now()
         
         saved = self._persist_or_raise(session)
+        msg_action = "merged with existing material" if merged else "imported successfully"
         return CommandResult(
             command="material import",
             payload=saved,
-            message=f"Material imported successfully for session '{session_id}'.",
+            message=f"Material {msg_action} for session '{session_id}'.",
         )
 
     def _concat_audio(self, base_path: str, part_path: str) -> None:
@@ -1260,6 +1287,26 @@ class SessionService:
                 f"Summary notes saved for session '{session_id}' at '{note_relative_path}'."
             ),
         )
+
+    def _merge_pdfs(self, existing_pdf_path: str, new_pdf_path: str, output_path: str) -> None:
+        try:
+            from pypdf import PdfWriter  # type: ignore
+        except ImportError as exc:
+            raise RuntimeError("pypdf is required to merge PDF files. Run: pip install pypdf") from exc
+            
+        merger = PdfWriter()
+        try:
+            merger.append(existing_pdf_path)
+            merger.append(new_pdf_path)
+            
+            # We write to a temporary file first in case output_path is same as existing_pdf_path
+            temp_out = output_path + ".tmp"
+            merger.write(temp_out)
+        finally:
+            merger.close()
+            
+        import shutil
+        shutil.move(temp_out, output_path)
 
     def _copy_import_audio(self, *, source_path: str, destination_relative_path: str) -> None:
         metadata_root = self.store.metadata_file.parent.parent

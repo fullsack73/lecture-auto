@@ -76,6 +76,60 @@ def test_build_service_env_overrides_config_for_stt_mode_and_model(tmp_path: Pat
     assert service.stt_config.local_model_name == "base"
 
 
+def test_build_service_loads_llm_model_and_thinking_from_config(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("LLM_MODEL", raising=False)
+    monkeypatch.delenv("LLM_THINKING_LEVEL", raising=False)
+
+    config_path = _config_path(tmp_path)
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(
+        json.dumps(
+            {
+                "gemini_api_key": "fake-key",
+                "llm_model_name": "gemini-3.1-pro-preview",
+                "llm_thinking_level": "high",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with patch("lecture_auto.cli.GeminiLLMAdapter") as adapter_cls:
+        service = _build_service()
+
+    assert service.llm_adapter is adapter_cls.return_value
+    used_config = adapter_cls.call_args.args[0]
+    assert used_config.model_name == "gemini-3.1-pro-preview"
+    assert used_config.thinking_level == "high"
+
+
+def test_build_service_env_overrides_llm_model_and_thinking(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("LLM_MODEL", "gemini-3.1-flash-lite-preview")
+    monkeypatch.setenv("LLM_THINKING_LEVEL", "low")
+
+    config_path = _config_path(tmp_path)
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(
+        json.dumps(
+            {
+                "gemini_api_key": "fake-key",
+                "llm_model_name": "gemini-3.1-pro-preview",
+                "llm_thinking_level": "high",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with patch("lecture_auto.cli.GeminiLLMAdapter") as adapter_cls:
+        service = _build_service()
+
+    assert service.llm_adapter is adapter_cls.return_value
+    used_config = adapter_cls.call_args.args[0]
+    assert used_config.model_name == "gemini-3.1-flash-lite-preview"
+    assert used_config.thinking_level == "low"
+
+
 def test_cli_config_set_persists_audio_gain(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
 

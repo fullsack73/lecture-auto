@@ -30,6 +30,12 @@ def test_llm_config_validation_passes_with_api_key() -> None:
     config.validate()
 
 
+def test_llm_config_validation_rejects_too_small_chunk_size() -> None:
+    config = LLMConfig(api_key="gemini-key-123", chunk_size=100)
+    with pytest.raises(ValueError, match="chunk_size must be at least 500"):
+        config.validate()
+
+
 def test_gemini_adapter_initializes_with_valid_config() -> None:
     sys.modules['google.genai'].reset_mock()
     config = LLMConfig(api_key="valid-key")
@@ -49,6 +55,31 @@ def test_gemini_adapter_refine_transcript_empty_text() -> None:
     adapter = GeminiLLMAdapter(config)
     result = adapter.refine_transcript("   ")
     assert result == "   "
+
+
+def test_refine_transcript_uses_adaptive_chunk_size_for_large_input() -> None:
+    sys.modules['google.genai'].reset_mock()
+
+    mock_client_instance = MagicMock()
+    mock_response = MagicMock()
+    mock_response.text = "Refined"
+    mock_client_instance.models.generate_content.return_value = mock_response
+    sys.modules['google.genai'].Client.return_value = mock_client_instance
+
+    config = LLMConfig(api_key="valid-key", chunk_size=4000)
+    adapter = GeminiLLMAdapter(config)
+
+    raw_text = "word " * 7200  # ~36k chars
+    adapter.refine_transcript(raw_text)
+
+    chunk_lengths: list[int] = []
+    for call in mock_client_instance.models.generate_content.call_args_list:
+        contents = call.kwargs["contents"]
+        chunk_text = contents.split("\n", 1)[1] if "\n" in contents else ""
+        chunk_lengths.append(len(chunk_text))
+
+    assert mock_client_instance.models.generate_content.call_count > 1
+    assert max(chunk_lengths) > 4000
 
 
 def test_model_name_normalization_maps_gemini_3_0_alias() -> None:

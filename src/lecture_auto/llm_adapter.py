@@ -89,7 +89,7 @@ class GeminiLLMAdapter:
             "Try to preserve original source's form and it's content as best as possible."
         )
 
-        chunk_size = self.config.chunk_size
+        chunk_size = self.config.resolve_chunk_size(len(raw_text))
         refined_chunks = []
         start_idx = 0
 

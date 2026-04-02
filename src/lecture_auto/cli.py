@@ -103,15 +103,27 @@ def _build_service() -> SessionService:
     api_key = os.environ.get("GEMINI_API_KEY") or config_gemini_api_key
     if api_key and api_key.strip():
         try:
-            llm_adapter = GeminiLLMAdapter(
-                LLMConfig(
-                    api_key=api_key,
-                    model_name=os.environ.get("LLM_MODEL", "gemini-3.1-flash-lite-preview"),
-                    thinking_level=os.environ.get("LLM_THINKING_LEVEL", "medium"),
-                    language=config_llm_language,
-                )
+            model_name = (
+                os.environ.get("LLM_MODEL")
+                or config_llm_model_name
+                or "gemini-3.1-flash-lite-preview"
             )
-        except LLMConfigError:
+            thinking_level = (
+                os.environ.get("LLM_THINKING_LEVEL")
+                or config_llm_thinking_level
+                or "medium"
+            )
+            llm_config = LLMConfig(
+                api_key=api_key,
+                model_name=model_name.strip(),
+                thinking_level=thinking_level.strip().lower(),
+                language=config_llm_language,
+            )
+            llm_config.validate()
+            llm_adapter = GeminiLLMAdapter(
+                llm_config
+            )
+        except (LLMConfigError, ValueError):
             llm_adapter = None
 
     resolved_audio_gain = 1.0
