@@ -321,7 +321,8 @@ def _menu_session_detail(service, session_id: str) -> None:
             [
                 questionary.Choice("📄  View detail", "view"),
                 questionary.Choice("✏   Edit metadata", "edit"),
-                questionary.Choice("📤  Import material (PDF)", "import_material"),
+                questionary.Choice("�  Audio management", "audio_management"),
+                questionary.Choice("�📤  Import material (PDF)", "import_material"),
                 SEPARATOR,
                 questionary.Choice("← Back", "__back__"),
             ],
@@ -343,6 +344,9 @@ def _menu_session_detail(service, session_id: str) -> None:
                 # Session was renamed — update the local reference and continue
                 session_id = new_id
 
+        elif choice == "audio_management":
+            _menu_audio_management(service, session_id)
+
         elif choice == "import_material":
             material_path = _ask("Path to PDF material file:", default="")
             if not material_path or not material_path.strip():
@@ -357,6 +361,31 @@ def _menu_session_detail(service, session_id: str) -> None:
                 except SessionCommandError as exc:
                     _echo_error("import material", exc)
 
+        typer.echo()
+
+
+def _menu_audio_management(service, session_id: str) -> None:
+    """Per-session sub-menu for audio management."""
+    while True:
+        choice = _select(
+            f"Audio Management for {session_id}",
+            [
+                questionary.Choice("🔊  Volume control (refine recording)", "volume_control"),
+                SEPARATOR,
+                questionary.Choice("← Back", "__back__"),
+            ],
+        )
+
+        if choice in (None, "__back__"):
+            return
+
+        if choice == "volume_control":
+            try:
+                result = service.refine_audio_volume(session_id=session_id)
+                _echo_result(result)
+            except SessionCommandError as exc:
+                _echo_error("audio management", exc)
+            
         typer.echo()
 
 

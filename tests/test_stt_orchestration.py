@@ -217,7 +217,7 @@ def test_audio_gain_default_is_noop_and_uses_original_path(tmp_path: Path) -> No
     assert result.payload["transcription_progress"]["use_dynaudnorm"] is False
 
 
-def test_audio_gain_above_one_uses_amplified_temp_path(tmp_path: Path) -> None:
+def test_refine_audio_uses_amplified_temp_path_and_transcription_uses_it(tmp_path: Path) -> None:
     class CapturingAdapter:
         def __init__(self) -> None:
             self.seen_audio_path: str | None = None
@@ -247,12 +247,20 @@ def test_audio_gain_above_one_uses_amplified_temp_path(tmp_path: Path) -> None:
     source.write_bytes(b"wav")
     service.import_audio("session-1008", str(source))
 
+    # Write a dummy test file to fake the output of amplification.
+    sample_amp_output = tmp_path / "amplified-input.wav"
+    sample_amp_output.parent.mkdir(parents=True, exist_ok=True)
+    sample_amp_output.write_bytes(b"refined wav")
+
     with patch("lecture_auto.session_service.amplified_audio_input") as amplifier:
-        amplifier.return_value.__enter__.return_value = "/tmp/amplified-input.wav"
+        amplifier.return_value.__enter__.return_value = str(sample_amp_output)
         amplifier.return_value.__exit__.return_value = False
+
+        refine_result = service.refine_audio_volume("session-1008")
+        assert refine_result.command == "audio refine"
 
         result = service.transcribe_session("session-1008")
 
-    assert adapter.seen_audio_path == "/tmp/amplified-input.wav"
+    assert adapter.seen_audio_path == "recordings/session-1008-refined.wav"
     assert result.payload["transcription_progress"]["audio_amplification_applied"] is True
     assert result.payload["transcription_progress"]["dynaudnorm_f"] == 100

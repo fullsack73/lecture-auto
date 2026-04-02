@@ -424,6 +424,62 @@ class SessionService:
             message=f"Session '{session_id}' and associated files have been deleted.",
         )
 
+    def refine_audio_volume(self, session_id: str) -> CommandResult:
+        """Apply audio volume refinement (dynaudnorm) to the session's audio recording."""
+        session = self._require_session(session_id)
+        if session["audio_file_path"] is None:
+            raise SessionCommandError(
+                code="REFINE_AUDIO_NO_SOURCE",
+                message="No original audio found for refinement.",
+                guidance="Please import or capture audio for this session first.",
+                exit_code=1,
+            )
+
+        use_dyn = self.stt_config.use_dynaudnorm
+        f = self.stt_config.dynaudnorm_f
+        g = self.stt_config.dynaudnorm_g
+
+        if not use_dyn:
+            raise SessionCommandError(
+                code="REFINE_AUDIO_DYNAUDNORM_DISABLED",
+                message="Audio refinement requires use_dynaudnorm to be enabled in config.",
+                guidance="Enable it via `config set --use-dynaudnorm True`.",
+                exit_code=1,
+            )
+
+        source_path = self._resolve_audio_input_path(session["audio_file_path"])
+
+        try:
+            with amplified_audio_input(
+                audio_path=source_path,
+                use_dynaudnorm=use_dyn,
+                dynaudnorm_f=f,
+                dynaudnorm_g=g,
+            ) as output_tmp_path:
+                refined_relative = self.store.build_refined_audio_path(
+                    session_id,
+                    course=session.get("course"),
+                )
+                refined_abs = (self.store.metadata_file.parent.parent / refined_relative).resolve()
+                refined_abs.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(output_tmp_path, refined_abs)
+
+                session["refined_audio_file_path"] = refined_relative
+                saved = self._persist_or_raise(session)
+
+                return CommandResult(
+                    command="audio refine",
+                    payload=self._build_progress_payload(saved),
+                    message=f"Successfully refined audio for session '{session_id}'.",
+                )
+        except AudioAmplificationError as exc:
+            raise SessionCommandError(
+                code="REFINE_AUDIO_FAILED",
+                message="Audio amplification process failed.",
+                guidance=str(exc),
+                exit_code=1,
+            ) from exc
+
     def import_audio(
         self,
         session_id: str,
@@ -685,7 +741,7 @@ class SessionService:
                 exit_code=1,
             )
 
-        audio_relative_path = session.get("audio_file_path")
+        audio_relative_path = session.get("refined_audio_file_path") or session.get("audio_file_path")
         if not isinstance(audio_relative_path, str) or not audio_relative_path.strip():
             raise SessionCommandError(
                 code="TRANSCRIPTION_AUDIO_NOT_FOUND",
@@ -714,57 +770,39 @@ class SessionService:
 
         transcript_text: str | None = None
         transcript_result = None
-        use_dyn = self.stt_config.use_dynaudnorm
-        f = self.stt_config.dynaudnorm_f
-        g = self.stt_config.dynaudnorm_g
-        source_for_amplification = self._resolve_audio_input_path(audio_relative_path)
-        amplification_context = (
-            amplified_audio_input(
-                audio_path=source_for_amplification,
-                use_dynaudnorm=use_dyn,
-                dynaudnorm_f=f,
-                dynaudnorm_g=g,
-            )
-            if use_dyn
-            else nullcontext(adapter_audio_path)
-        )
+        effective_audio_path = adapter_audio_path
 
-        try:
-            with amplification_context as effective_audio_path:
-                while True:
-                    try:
-                        attempt += 1
-                        transcript_result = adapter.transcribe(audio_path=effective_audio_path)
-                        transcript_text = transcript_result.transcript_text
-                        break
-                    except STTTransientNetworkError as exc:
-                        if mode == "api" and attempt <= retry_limit:
-                            continue
-                        self._mark_transcription_failure(session, "network/transient")
-                        raise self.map_transcription_failure(
-                            "network/transient", detail=str(exc)
-                        ) from exc
-                    except STTProviderAuthError as exc:
-                        self._mark_transcription_failure(session, "provider_auth")
-                        raise self.map_transcription_failure(
-                            "provider_auth", detail=str(exc)
-                        ) from exc
-                    except STTAudioDecodeError as exc:
-                        self._mark_transcription_failure(session, "audio_decode")
-                        raise self.map_transcription_failure(
-                            "audio_decode", detail=str(exc)
-                        ) from exc
-                    except STTConfigError as exc:
-                        self._mark_transcription_failure(session, "configuration")
-                        raise self.map_transcription_failure(
-                            "configuration", detail=str(exc)
-                        ) from exc
-                    except STTRuntimeError as exc:
-                        self._mark_transcription_failure(session, "runtime")
-                        raise self.map_transcription_failure("runtime", detail=str(exc)) from exc
-        except AudioAmplificationError as exc:
-            self._mark_transcription_failure(session, "configuration")
-            raise self.map_transcription_failure("configuration", detail=str(exc)) from exc
+        while True:
+            try:
+                attempt += 1
+                transcript_result = adapter.transcribe(audio_path=effective_audio_path)
+                transcript_text = transcript_result.transcript_text
+                break
+            except STTTransientNetworkError as exc:
+                if mode == "api" and attempt <= retry_limit:
+                    continue
+                self._mark_transcription_failure(session, "network/transient")
+                raise self.map_transcription_failure(
+                    "network/transient", detail=str(exc)
+                ) from exc
+            except STTProviderAuthError as exc:
+                self._mark_transcription_failure(session, "provider_auth")
+                raise self.map_transcription_failure(
+                    "provider_auth", detail=str(exc)
+                ) from exc
+            except STTAudioDecodeError as exc:
+                self._mark_transcription_failure(session, "audio_decode")
+                raise self.map_transcription_failure(
+                    "audio_decode", detail=str(exc)
+                ) from exc
+            except STTConfigError as exc:
+                self._mark_transcription_failure(session, "configuration")
+                raise self.map_transcription_failure(
+                    "configuration", detail=str(exc)
+                ) from exc
+            except STTRuntimeError as exc:
+                self._mark_transcription_failure(session, "runtime")
+                raise self.map_transcription_failure("runtime", detail=str(exc)) from exc
 
         output_text = transcript_text or ""
         if transcript_result and transcript_result.segments:
@@ -803,10 +841,10 @@ class SessionService:
             "attempt": attempt,
             "retry_limit": retry_limit,
             "mode": mode,
-            "use_dynaudnorm": use_dyn,
-            "dynaudnorm_f": f,
-            "dynaudnorm_g": g,
-            "audio_amplification_applied": use_dyn,
+            "use_dynaudnorm": self.stt_config.use_dynaudnorm,
+            "dynaudnorm_f": self.stt_config.dynaudnorm_f,
+            "dynaudnorm_g": self.stt_config.dynaudnorm_g,
+            "audio_amplification_applied": self.stt_config.use_dynaudnorm,
             "transcript_file_path": transcript_relative_path,
         }
 

@@ -19,6 +19,7 @@ METADATA_FIELDS = (
     "job_error_code",
     "import_source_audio_path",
     "audio_file_path",
+    "refined_audio_file_path",
     "transcript_file_path",
     "material_file_path",
     "transcription_status",
@@ -109,6 +110,7 @@ class SessionMetadataStore:
                 "title",
                 "course",
                 "audio_file_path",
+                "refined_audio_file_path",
                 "job_status",
                 "job_error_code",
                 "import_source_audio_path",
@@ -138,6 +140,7 @@ class SessionMetadataStore:
             "title",
             "course",
             "audio_file_path",
+            "refined_audio_file_path",
             "transcript_file_path",
             "material_file_path",
             "transcription_status",
@@ -170,6 +173,12 @@ class SessionMetadataStore:
             self._validate_audio_path_for_session(
                 session_id=session["session_id"],
                 audio_file_path=session["audio_file_path"],
+            )
+
+        if session.get("refined_audio_file_path") is not None:
+            self._validate_refined_audio_path_for_session(
+                session_id=session["session_id"],
+                audio_file_path=session["refined_audio_file_path"],
             )
 
         transcript_file_path = session["transcript_file_path"]
@@ -211,6 +220,19 @@ class SessionMetadataStore:
         # Keep folder names filesystem-safe and stable across platforms.
         slug = re.sub(r"[^a-z0-9]+", "-", text).strip("-")
         return slug or None
+
+    def build_refined_audio_path(
+        self,
+        session_id: str,
+        extension: str = "wav",
+        *,
+        course: str | None = None,
+    ) -> str:
+        clean_extension = extension.lstrip(".").strip().lower()
+        course_folder = self.normalize_course_folder(course)
+        if course_folder:
+            return f"recordings/{course_folder}/{session_id}-refined.{clean_extension}"
+        return f"recordings/{session_id}-refined.{clean_extension}"
 
     def build_recording_path(
         self,
@@ -364,6 +386,28 @@ class SessionMetadataStore:
         if not filename.startswith(expected_prefixes):
             raise SessionMetadataValidationError(
                 "Field 'audio_file_path' must follow recordings/{session_id}.* convention"
+            )
+
+    def _validate_refined_audio_path_for_session(self, session_id: str, audio_file_path: str) -> None:
+        normalized = PurePosixPath(audio_file_path).as_posix()
+
+        if not normalized.startswith("recordings/"):
+            raise SessionMetadataValidationError(
+                "Field 'refined_audio_file_path' must follow recordings/{session_id}-refined.* convention"
+            )
+
+        path = PurePosixPath(normalized)
+        parts = path.parts
+        if len(parts) not in {2, 3}:
+            raise SessionMetadataValidationError(
+                "Field 'refined_audio_file_path' must follow recordings/{session_id}-refined.* convention"
+            )
+
+        filename = parts[-1]
+        expected_prefix = f"{session_id}-refined."
+        if not filename.startswith(expected_prefix):
+            raise SessionMetadataValidationError(
+                "Field 'refined_audio_file_path' must follow recordings/{session_id}-refined.* convention"
             )
 
     def _validate_transcript_path_for_session(
