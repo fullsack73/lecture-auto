@@ -33,18 +33,17 @@ class DeepgramSTTRuntimeAdapter:
 
         try:
             import httpx
+            import time
         except ImportError as exc:
             raise STTConfigError(
                 "httpx is not installed. Run: pip install httpx"
             ) from exc
 
         try:
-            with open(audio_path, "rb") as audio_file:
-                buffer_data = audio_file.read()
-
             params: dict[str, str] = {
                 "model": "nova-3",
                 "smart_format": "true",
+                "prerecorded": "true",
             }
             if self._diarization:
                 params["diarize"] = "true"
@@ -72,20 +71,34 @@ class DeepgramSTTRuntimeAdapter:
             }
 
             with httpx.Client(timeout=300.0) as client:
-                raw_response = client.post(
-                    "https://api.deepgram.com/v1/listen",
-                    params=params,
-                    headers=headers,
-                    content=buffer_data,
-                )
+                with open(audio_path, "rb") as audio_file:
+                    # Stream upload to avoid loading large files into memory
+                    raw_response = client.post(
+                        "https://api.deepgram.com/v1/listen",
+                        params=params,
+                        headers=headers,
+                        content=audio_file,
+                    )
 
-            if raw_response.status_code == 401 or raw_response.status_code == 403:
-                raise STTProviderAuthError(
-                    f"Deepgram authentication failed (HTTP {raw_response.status_code}): {raw_response.text}"
-                )
+                if raw_response.status_code == 401 or raw_response.status_code == 403:
+                    raise STTProviderAuthError(
+                        f"Deepgram authentication failed (HTTP {raw_response.status_code}): {raw_response.text}"
+                    )
 
-            raw_response.raise_for_status()
-            response = raw_response.json()
+                raw_response.raise_for_status()
+                response = raw_response.json()
+
+            # If the response doesn't contain results, it might be an async job
+            # (Though /v1/listen usually returns sync unless specified or too large)
+            # To be robust for very long files, we check for a request_id or if results are missing.
+            results = self._field(response, "results")
+            if results is None:
+                request_id = self._field(response, "request_id")
+                if request_id:
+                    response = self._poll_for_result(audio_path, request_id)
+                else:
+                    # This case shouldn't happen with /v1/listen but good for safety
+                    raise STTConfigError(f"Deepgram response missing results and request_id: {response}")
 
             transcript_text = ""
             segments: list[DiarizedSegment] = []
@@ -126,6 +139,45 @@ class DeepgramSTTRuntimeAdapter:
             raise STTConfigError(
                 f"Deepgram transcription failed: {exc}"
             ) from exc
+
+    def _poll_for_result(self, audio_path: str, request_id: str) -> dict[str, Any]:
+        """Poll Deepgram API until the asynchronous transcription is complete."""
+        import httpx
+        import time
+
+        headers = {"Authorization": f"Token {self._api_key}"}
+        url = f"https://api.deepgram.com/v1/listen?request_id={request_id}"
+
+        max_timeout = 1200  # 20 minutes
+        start_time = time.time()
+        poll_interval = 2.0
+
+        with httpx.Client(timeout=30.0) as client:
+            while True:
+                if time.time() - start_time > max_timeout:
+                    raise STTTransientNetworkError(
+                        f"Deepgram transcription timed out after {max_timeout} seconds."
+                    )
+
+                raw_response = client.get(url, headers=headers)
+
+                if raw_response.status_code == 401 or raw_response.status_code == 403:
+                    raise STTProviderAuthError(
+                        f"Deepgram authentication failed during polling (HTTP {raw_response.status_code}): {raw_response.text}"
+                    )
+
+                raw_response.raise_for_status()
+                response = raw_response.json()
+
+                # Check if transcription is complete.
+                # Deepgram async results typically contain 'results' when done.
+                if self._field(response, "results") is not None:
+                    return response
+
+                # Otherwise, wait and poll again
+                time.sleep(poll_interval)
+                # Exponential backoff to be polite, capped at 10s
+                poll_interval = min(poll_interval * 1.5, 10.0)
 
     def _field(self, obj: Any, name: str) -> Any:
         if obj is None:
