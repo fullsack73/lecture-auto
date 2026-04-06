@@ -13,8 +13,8 @@ dependencies = [
 	"questionary>=2.0",
 	"google-auth>=2.0",
         "pypdf>=5.0.0",
-        "torch>=2.0.0,<2.1.0",
-        "torchaudio>=2.0.0,<2.1.0",
+        "torch>=2.2.0",
+        "torchaudio>=2.2.0",
         "deepfilternet>=0.5.6",
 ]
 
