@@ -370,6 +370,7 @@ def _menu_audio_management(service, session_id: str) -> None:
         choice = _select(
             f"Audio Management for {session_id}",
             [
+                questionary.Choice("�  Noise control (deepfilternet)", "noise_control"),
                 questionary.Choice("🔊  Volume control (refine recording)", "volume_control"),
                 SEPARATOR,
                 questionary.Choice("← Back", "__back__"),
@@ -379,7 +380,14 @@ def _menu_audio_management(service, session_id: str) -> None:
         if choice in (None, "__back__"):
             return
 
-        if choice == "volume_control":
+        if choice == "noise_control":
+            try:
+                result = service.refine_audio_noise(session_id=session_id)
+                _echo_result(result)
+            except SessionCommandError as exc:
+                _echo_error("audio management", exc)
+
+        elif choice == "volume_control":
             try:
                 result = service.refine_audio_volume(session_id=session_id)
                 _echo_result(result)

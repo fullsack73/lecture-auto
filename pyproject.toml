@@ -13,8 +13,14 @@ dependencies = [
 	"questionary>=2.0",
 	"google-auth>=2.0",
         "pypdf>=5.0.0",
+        "torch>=2.0.0,<2.1.0",
+        "torchaudio>=2.0.0,<2.1.0",
+        "deepfilternet>=0.5.6",
 ]
+
+[project.scripts]
+lecture_auto = "lecture_auto.cli:main"
+lecture-auto = "lecture_auto.cli:main"
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
-testpaths = ["tests"]

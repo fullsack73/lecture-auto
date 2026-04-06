@@ -447,7 +447,10 @@ class SessionService:
                 exit_code=1,
             )
 
-        source_path = self._resolve_audio_input_path(session["audio_file_path"])
+        source_rel_path = session.get("refined_audio_file_path") or session["audio_file_path"]
+        source_path = self._resolve_audio_input_path(source_rel_path)
+        # Volume filter ALWAYS outputs a true WAV via pcm_s16le
+        source_extension = "wav"
 
         try:
             with amplified_audio_input(
@@ -458,6 +461,7 @@ class SessionService:
             ) as output_tmp_path:
                 refined_relative = self.store.build_refined_audio_path(
                     session_id,
+                    extension=source_extension,
                     course=session.get("course"),
                 )
                 refined_abs = (self.store.metadata_file.parent.parent / refined_relative).resolve()
@@ -476,6 +480,47 @@ class SessionService:
             raise SessionCommandError(
                 code="REFINE_AUDIO_FAILED",
                 message="Audio amplification process failed.",
+                guidance=str(exc),
+                exit_code=1,
+            ) from exc
+
+    def refine_audio_noise(self, session_id: str) -> CommandResult:
+        """Apply noise reduction (deepFilter) to the session's audio recording."""
+        session = self._require_session(session_id)
+        if session["audio_file_path"] is None:
+            raise SessionCommandError(
+                code="REFINE_AUDIO_NO_SOURCE",
+                message="No original audio found for refinement.",
+                guidance="Please import or capture audio for this session first.",
+                exit_code=1,
+            )
+
+        source_rel_path = session.get("refined_audio_file_path") or session["audio_file_path"]
+        source_path = self._resolve_audio_input_path(source_rel_path)
+
+        try:
+            from lecture_auto.audio_amplifier import deepfilter_audio_input, AudioFilterError
+            with deepfilter_audio_input(audio_path=source_path) as output_tmp_path:
+                refined_relative = self.store.build_refined_audio_path(
+                    session_id,
+                    course=session.get("course"),
+                )
+                refined_abs = (self.store.metadata_file.parent.parent / refined_relative).resolve()
+                refined_abs.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(output_tmp_path, refined_abs)
+
+                session["refined_audio_file_path"] = refined_relative
+                saved = self._persist_or_raise(session)
+
+                return CommandResult(
+                    command="audio refine-noise",
+                    payload=self._build_progress_payload(saved),
+                    message=f"Successfully reduced noise for session '{session_id}'.",
+                )
+        except AudioFilterError as exc:
+            raise SessionCommandError(
+                code="REFINE_NOISE_FAILED",
+                message="Audio noise reduction process failed.",
                 guidance=str(exc),
                 exit_code=1,
             ) from exc

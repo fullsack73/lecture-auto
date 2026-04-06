@@ -215,6 +215,19 @@ def session_refine_audio(
     )
 
 
+@session_app.command("refine-noise")
+def session_refine_noise(
+    session_id: str = typer.Argument(..., help="Session id"),
+    as_json: bool = typer.Option(False, "--json", help="Render output as JSON"),
+) -> None:
+    service = _build_service()
+    _run_or_exit(
+        "session refine-noise",
+        as_json,
+        lambda: service.refine_audio_noise(session_id=session_id),
+    )
+
+
 @session_app.command("history")
 def session_history(
     as_json: bool = typer.Option(False, "--json", help="Render output as JSON"),
