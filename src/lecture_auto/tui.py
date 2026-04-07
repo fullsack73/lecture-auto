@@ -736,6 +736,7 @@ def _menu_config() -> bool:
                 ("use_dynaudnorm", "Use dynaudnorm filter (True or False)"),
                 ("dynaudnorm_f", "dynaudnorm f parameter (10-8000)"),
                 ("dynaudnorm_g", "dynaudnorm g parameter (odd 3-301)"),
+                ("gain_db", "Additional volume gain in dB (-60.0 to 60.0)"),
                 "── STT (Speech-to-Text) ──",
                 ("stt_mode", "STT mode (api or local)"),
                 ("stt_language", "STT language (e.g. ko)"),
@@ -862,6 +863,17 @@ def _menu_config() -> bool:
                             typer.echo("Invalid g parameter. Must be an odd integer between 3 and 301. Skipping.")
                             continue
                         data[selected_key] = numeric_value_g
+                        updated = True
+                        continue
+                    if selected_key == "gain_db":
+                        try:
+                            numeric_value_gain = float(value)
+                            if numeric_value_gain < -60.0 or numeric_value_gain > 60.0:
+                                raise ValueError()
+                        except ValueError:
+                            typer.echo("Invalid gain_db. Must be a number between -60.0 and 60.0. Skipping.")
+                            continue
+                        data[selected_key] = numeric_value_gain
                         updated = True
                         continue
                     if selected_key == "workspace":

@@ -23,6 +23,8 @@ class STTConfig:
     use_dynaudnorm: bool = False
     dynaudnorm_f: int | None = None
     dynaudnorm_g: int | None = None
+    gain_db: float | None = None
+
 
     def validate(self) -> None:
         if self.mode not in {"local", "api"}:
@@ -47,3 +49,5 @@ class STTConfig:
             raise ValueError("dynaudnorm_f must be between 10 and 8000.")
         if self.dynaudnorm_g is not None and (self.dynaudnorm_g < 3 or self.dynaudnorm_g > 301 or self.dynaudnorm_g % 2 == 0):
             raise ValueError("dynaudnorm_g must be an odd integer between 3 and 301.")
+        if self.gain_db is not None and (self.gain_db < -60.0 or self.gain_db > 60.0):
+            raise ValueError("gain_db must be between -60.0 and 60.0.")

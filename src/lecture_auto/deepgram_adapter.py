@@ -42,7 +42,7 @@ class DeepgramSTTRuntimeAdapter:
         try:
             params: dict[str, str] = {
                 "model": "nova-3",
-                "smart_format": "true",
+                "smart_format": "false",
                 "prerecorded": "true",
             }
             if self._diarization:
@@ -68,6 +68,7 @@ class DeepgramSTTRuntimeAdapter:
             headers = {
                 "Authorization": f"Token {self._api_key}",
                 "Content-Type": content_type,
+                "Content-Length": str(os.path.getsize(audio_path)) if os.path.exists(audio_path) else "0",
             }
 
             with httpx.Client(timeout=300.0) as client:
@@ -88,7 +89,11 @@ class DeepgramSTTRuntimeAdapter:
                 raw_response.raise_for_status()
                 response = raw_response.json()
 
-            # If the response doesn't contain results, it might be an async job
+                # Log Deepgram processed duration for debugging truncation
+                metadata = self._field(response, "metadata")
+                if metadata:
+                    duration = self._field(metadata, "duration")
+                    logger.info(f"Deepgram processed audio duration: {duration}s for file {audio_path}")
             # (Though /v1/listen usually returns sync unless specified or too large)
             # To be robust for very long files, we check for a request_id or if results are missing.
             results = self._field(response, "results")

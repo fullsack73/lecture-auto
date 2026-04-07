@@ -458,6 +458,7 @@ class SessionService:
                 use_dynaudnorm=use_dyn,
                 dynaudnorm_f=f,
                 dynaudnorm_g=g,
+                gain_db=self.stt_config.gain_db,
             ) as output_tmp_path:
                 refined_relative = self.store.build_refined_audio_path(
                     session_id,

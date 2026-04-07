@@ -139,6 +139,7 @@ def amplified_audio_input(
     use_dynaudnorm: bool = False,
     dynaudnorm_f: int | None = None,
     dynaudnorm_g: int | None = None,
+    gain_db: float | None = None,
     ffmpeg_bin: str = "ffmpeg",
 ) -> Iterator[str]:
     """Yield an audio path suitable for STT, amplifying input when needed.
@@ -162,6 +163,10 @@ def amplified_audio_input(
     dynaudnorm_str = "dynaudnorm"
     if filter_opts:
         dynaudnorm_str += "=" + ":".join(filter_opts)
+
+    if gain_db is not None:
+        dynaudnorm_str += f",volume={gain_db}dB"
+
 
     with tempfile.TemporaryDirectory(prefix="lecture_auto_amp_") as tmp_dir:
         output_path = Path(tmp_dir) / "amplified.wav"

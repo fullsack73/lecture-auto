@@ -92,6 +92,7 @@ def _build_service() -> SessionService:
                 config_use_dynaudnorm = config_data.get("use_dynaudnorm", False)
                 config_dynaudnorm_f = config_data.get("dynaudnorm_f")
                 config_dynaudnorm_g = config_data.get("dynaudnorm_g")
+                config_gain_db = config_data.get("gain_db")
         except Exception:
             pass
 
@@ -157,6 +158,7 @@ def _build_service() -> SessionService:
         use_dynaudnorm=resolved_use_dynaudnorm,
         dynaudnorm_f=resolved_dynaudnorm_f,
         dynaudnorm_g=resolved_dynaudnorm_g,
+        gain_db=config_gain_db,
     )
 
     return SessionService(
@@ -387,6 +389,7 @@ def config_set(
     use_dynaudnorm: bool | None = typer.Option(None, "--use-dynaudnorm/--no-use-dynaudnorm", help="Apply dynaudnorm audio filter during STT pre-processing."),
     dynaudnorm_f: int | None = typer.Option(None, "--dynaudnorm-f", help="dynaudnorm 'f' parameter (10 to 8000)."),
     dynaudnorm_g: int | None = typer.Option(None, "--dynaudnorm-g", help="dynaudnorm 'g' parameter (odd integer 3 to 301)."),
+    gain_db: float | None = typer.Option(None, "--gain-db", help="Additional volume gain in dB (-60.0 to 60.0)."),
 ) -> None:
     config_path = _get_global_config_path()
     config_data = {}
@@ -509,13 +512,21 @@ def config_set(
         typer.echo(f"Global dynaudnorm_f set to: {config_data['dynaudnorm_f']}")
         updated = True
 
-    if dynaudnorm_g is not None:
-        if dynaudnorm_g < 3 or dynaudnorm_g > 301 or dynaudnorm_g % 2 == 0:
-            typer.echo("dynaudnorm_g must be an odd integer between 3 and 301.", err=True)
-            raise typer.Exit(code=1)
-        config_data["dynaudnorm_g"] = dynaudnorm_g
-        typer.echo(f"Global dynaudnorm_g set to: {config_data['dynaudnorm_g']}")
-        updated = True
+        if dynaudnorm_g is not None:
+            if dynaudnorm_g < 3 or dynaudnorm_g > 301 or dynaudnorm_g % 2 == 0:
+                typer.echo("dynaudnorm_g must be an odd integer between 3 and 301.", err=True)
+                raise typer.Exit(code=1)
+            config_data["dynaudnorm_g"] = dynaudnorm_g
+            typer.echo(f"Global dynaudnorm_g set to: {config_data['dynaudnorm_g']}")
+            updated = True
+
+        if gain_db is not None:
+            if gain_db < -60.0 or gain_db > 60.0:
+                typer.echo("gain_db must be between -60.0 and 60.0.", err=True)
+                raise typer.Exit(code=1)
+            config_data["gain_db"] = gain_db
+            typer.echo(f"Global gain_db set to: {config_data['gain_db']}")
+            updated = True
 
     if not updated:
         typer.echo("No configuration options provided to set.")
