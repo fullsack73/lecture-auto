@@ -8,7 +8,7 @@ import typer
 
 from lecture_auto.capture_runtime import FFmpegCaptureRuntimeAdapter
 from lecture_auto.cli_output import format_command_error, format_command_output
-from lecture_auto.llm_adapter import GeminiLLMAdapter, LLMConfigError
+from lecture_auto.llm_adapter import GeminiLLMAdapter, OllamaLLMAdapter, LLMConfigError
 from lecture_auto.llm_config import LLMConfig
 from lecture_auto.session_metadata_store import SessionMetadataStore
 from lecture_auto.session_service import SessionCommandError, SessionService
@@ -60,6 +60,7 @@ def _build_service() -> SessionService:
     config_stt_mode = None
     config_stt_local_model = None
     config_gemini_api_key = None
+    config_llm_provider = None
     config_llm_model_name = None
     config_llm_thinking_level = None
     config_audio_format = None
@@ -83,6 +84,7 @@ def _build_service() -> SessionService:
                 config_stt_mode = config_data.get("stt_mode")
                 config_stt_local_model = config_data.get("stt_local_model")
                 config_gemini_api_key = config_data.get("gemini_api_key")
+                config_llm_provider = config_data.get("llm_provider")
                 config_llm_model_name = config_data.get("llm_model_name")
                 config_llm_thinking_level = config_data.get("llm_thinking_level")
                 config_audio_format = config_data.get("audio_format")
@@ -105,13 +107,48 @@ def _build_service() -> SessionService:
     store = SessionMetadataStore(metadata_file=metadata_file)
 
     llm_adapter = None
-    api_key = os.environ.get("GEMINI_API_KEY") or config_gemini_api_key
-    if api_key and api_key.strip():
+    
+    # Determine LLM provider
+    llm_provider = (
+        os.environ.get("LLM_PROVIDER")
+        or config_llm_provider
+        or "gemini"
+    ).strip().lower()
+    
+    # For Gemini provider
+    if llm_provider == "gemini":
+        api_key = os.environ.get("GEMINI_API_KEY") or config_gemini_api_key
+        if api_key and api_key.strip():
+            try:
+                model_name = (
+                    os.environ.get("LLM_MODEL")
+                    or config_llm_model_name
+                    or "gemini-3.1-flash-lite-preview"
+                )
+                thinking_level = (
+                    os.environ.get("LLM_THINKING_LEVEL")
+                    or config_llm_thinking_level
+                    or "medium"
+                )
+                llm_config = LLMConfig(
+                    provider="gemini",
+                    api_key=api_key,
+                    model_name=model_name.strip(),
+                    thinking_level=thinking_level.strip().lower(),
+                    language=config_llm_language,
+                )
+                llm_config.validate()
+                llm_adapter = GeminiLLMAdapter(llm_config)
+            except (LLMConfigError, ValueError):
+                llm_adapter = None
+    
+    # For Ollama provider
+    elif llm_provider == "ollama":
         try:
             model_name = (
                 os.environ.get("LLM_MODEL")
                 or config_llm_model_name
-                or "gemini-3.1-flash-lite-preview"
+                or "gemma4:31b-cloud"
             )
             thinking_level = (
                 os.environ.get("LLM_THINKING_LEVEL")
@@ -119,15 +156,14 @@ def _build_service() -> SessionService:
                 or "medium"
             )
             llm_config = LLMConfig(
-                api_key=api_key,
+                provider="ollama",
+                api_key=None,  # Ollama doesn't need API key
                 model_name=model_name.strip(),
                 thinking_level=thinking_level.strip().lower(),
                 language=config_llm_language,
             )
             llm_config.validate()
-            llm_adapter = GeminiLLMAdapter(
-                llm_config
-            )
+            llm_adapter = OllamaLLMAdapter(llm_config)
         except (LLMConfigError, ValueError):
             llm_adapter = None
 

@@ -7,11 +7,13 @@ from dataclasses import dataclass
 class LLMConfig:
     """Configuration contract for selecting LLM provider options."""
 
+    provider: str = "gemini"  # "gemini" or "ollama"
     api_key: str | None = None
     model_name: str = "gemini-3.1-flash-lite-preview"
     thinking_level: str = "medium"  # "minimal", "low", "medium", "high"
     chunk_size: int = 4000  # Number of characters per chunk for long transcripts
     language: str | None = None
+    ollama_base_url: str = "http://localhost:11434"  # Ollama server URL
 
     def resolve_chunk_size(self, text_length: int) -> int:
         """Resolves a practical chunk size based on transcript length.
@@ -27,8 +29,14 @@ class LLMConfig:
         return min(10000, adaptive_size)
 
     def validate(self) -> None:
-        if not self.api_key or not self.api_key.strip():
-            raise ValueError("Gemini API key is required and cannot be empty.")
+        if self.provider == "gemini":
+            if not self.api_key or not self.api_key.strip():
+                raise ValueError("Gemini API key is required and cannot be empty.")
+        elif self.provider == "ollama":
+            # Ollama doesn't require API key
+            pass
+        else:
+            raise ValueError(f"Invalid provider: {self.provider}. Must be 'gemini' or 'ollama'.")
 
         if self.chunk_size < 500:
             raise ValueError("chunk_size must be at least 500 characters.")

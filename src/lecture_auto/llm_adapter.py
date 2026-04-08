@@ -229,3 +229,149 @@ class GeminiLLMAdapter:
                 raise LLMTransientNetworkError(f"Gemini network error: {exc}") from exc
 
             raise LLMTransientNetworkError(f"Gemini LLM request failed: {exc}") from exc
+
+
+class OllamaLLMAdapter:
+    """Implementation of Ollama API for transcript refinement using local models."""
+
+    def __init__(self, config: LLMConfig) -> None:
+        self.config = config
+        
+        # Check if ollama package is available
+        try:
+            import ollama
+            self.ollama = ollama
+        except ImportError as exc:
+            raise LLMConfigError(
+                "ollama package is not installed. Run: pip install ollama"
+            ) from exc
+
+    def refine_transcript(self, raw_text: str, context_topic: str | None = None) -> str:
+        """Refines the transcript in chunks using the Ollama model."""
+        if not raw_text or not raw_text.strip():
+            return raw_text
+
+        topic_prompt = f"The overall topic or subject is '{context_topic}'. " if context_topic else ""
+        lang_prompt = f"Output your response entirely in {self.config.language}. " if self.config.language else ""
+        system_instructions = (
+            f"You are a helpful assistant that refines lecture transcripts. {topic_prompt}"
+            "Your task is to improve the provided transcript chunk by fixing typos, spacing, punctuation, "
+            "and awkward wording. You must preserve the original lecture meaning and terminology entirely. "
+            f"{lang_prompt}"
+            "Only output the refined text, without any conversational padding."
+            "Try to preserve original source's form and it's content as best as possible."
+        )
+
+        chunk_size = self.config.resolve_chunk_size(len(raw_text))
+        refined_chunks = []
+        start_idx = 0
+
+        try:
+            while start_idx < len(raw_text):
+                end_idx = min(start_idx + chunk_size, len(raw_text))
+                
+                if end_idx < len(raw_text):
+                    last_space = raw_text.rfind(' ', start_idx, end_idx)
+                    if last_space > start_idx + chunk_size // 2:
+                        end_idx = last_space
+                
+                chunk = raw_text[start_idx:end_idx]
+                
+                prompt = f"Refine the following text:\n{chunk}"
+
+                try:
+                    response = self.ollama.chat(
+                        model=self.config.model_name,
+                        messages=[
+                            {"role": "system", "content": system_instructions},
+                            {"role": "user", "content": prompt}
+                        ]
+                    )
+                    text = response.get("message", {}).get("content", "").strip()
+                    refined_chunks.append(text)
+                except Exception as exc:
+                    error_msg = str(exc).lower()
+                    if "connection" in error_msg or "refused" in error_msg:
+                        raise LLMTransientNetworkError(
+                            f"Cannot connect to Ollama server at {self.config.ollama_base_url}. "
+                            f"Make sure Ollama is running: {exc}"
+                        ) from exc
+                    if "not found" in error_msg or "model" in error_msg:
+                        raise LLMConfigError(
+                            f"Model '{self.config.model_name}' not found. "
+                            f"Available models: {self._get_available_models()}"
+                        ) from exc
+                    raise LLMTransientNetworkError(f"Ollama request failed: {exc}") from exc
+                
+                start_idx = end_idx + 1 if end_idx < len(raw_text) and raw_text[end_idx] == ' ' else end_idx
+
+            return "\n".join(refined_chunks)
+
+        except (LLMConfigError, LLMProviderAuthError, LLMTransientNetworkError):
+            raise
+        except Exception as exc:
+            raise LLMTransientNetworkError(f"Ollama LLM request failed: {exc}") from exc
+
+    def generate_notes(
+        self,
+        transcript: str,
+        template: str,
+        context_topic: str | None = None, 
+        material_path: str | None = None,
+    ) -> str:
+        """Generates lecture notes from transcript text and template."""
+        if not transcript or not transcript.strip():
+            return transcript
+
+        topic_prompt = f"The lecture topic is '{context_topic}'. " if context_topic else ""
+        lang_prompt = f"Output your response entirely in {self.config.language}. " if self.config.language else ""
+        material_note = " (Note: PDF material attachment is not supported for Ollama.)" if material_path else ""
+        
+        system_instructions = (
+            f"You are a helpful assistant that generates lecture notes. {topic_prompt}"
+            "Use the provided markdown template exactly as the output structure. "
+            "Fill each section with concise, accurate lecture notes from the transcript. "
+            f"{lang_prompt}"
+            f"Do not invent facts not present in the transcript.{material_note}"
+        )
+
+        try:
+            prompt = (
+                f"Template:\n{template}\n\n"
+                f"Transcript:\n{transcript}\n"
+            )
+
+            response = self.ollama.chat(
+                model=self.config.model_name,
+                messages=[
+                    {"role": "system", "content": system_instructions},
+                    {"role": "user", "content": prompt}
+                ]
+            )
+            
+            text = response.get("message", {}).get("content", "").strip()
+            return text
+
+        except Exception as exc:
+            error_msg = str(exc).lower()
+            if "connection" in error_msg or "refused" in error_msg:
+                raise LLMTransientNetworkError(
+                    f"Cannot connect to Ollama server at {self.config.ollama_base_url}. "
+                    f"Make sure Ollama is running: {exc}"
+                ) from exc
+            if "not found" in error_msg or "model" in error_msg:
+                raise LLMConfigError(
+                    f"Model '{self.config.model_name}' not found. "
+                    f"Available models: {self._get_available_models()}"
+                ) from exc
+            raise LLMTransientNetworkError(f"Ollama LLM request failed: {exc}") from exc
+
+    def _get_available_models(self) -> str:
+        """Helper to list available Ollama models for error messages."""
+        try:
+            models_list = self.ollama.list()
+            model_names = [m.get("name", "") for m in models_list.get("models", [])]
+            return ", ".join(model_names) if model_names else "none"
+        except Exception:
+            return "unknown"
+
