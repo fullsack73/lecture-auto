@@ -37,6 +37,11 @@ from lecture_auto.llm_adapter import (
     LLMTransientNetworkError,
 )
 from lecture_auto.audio_amplifier import AudioAmplificationError, amplified_audio_input
+from lecture_auto.document_converter import (
+    DocumentConversionError,
+    is_supported_format,
+    convert_to_pdf,
+)
 
 VALID_STATES = {"idle", "recording", "stopping", "completed", "failed"}
 ALLOWED_TRANSITIONS = {
@@ -593,11 +598,14 @@ class SessionService:
         normalized_source_path = self._normalize_source_path(material_path)
         
         path_obj = Path(normalized_source_path)
-        if path_obj.suffix.lower() != ".pdf":
+        
+        # Check if format is supported
+        if not is_supported_format(normalized_source_path):
+            ext = path_obj.suffix.lower()
             raise SessionCommandError(
                 code="IMPORT_MATERIAL_INVALID_FORMAT",
-                message="Only PDF files are supported for material import.",
-                guidance="Please provide a valid .pdf file.",
+                message=f"Unsupported file format: {ext or 'no extension'}",
+                guidance="Supported formats: PDF, PPT, PPTX",
                 exit_code=1,
             )
 
@@ -608,29 +616,63 @@ class SessionService:
         )
         
         metadata_root = self.store.metadata_file.parent.parent
-        existing_material = session.get("material_file_path")
+        final_pdf_path = metadata_root / persisted_path
         
+        # Convert to PDF if needed
+        converted = False
+        temp_pdf_path = None
         try:
+            if path_obj.suffix.lower() != ".pdf":
+                # Need conversion
+                import tempfile
+                temp_pdf = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False)
+                temp_pdf_path = temp_pdf.name
+                temp_pdf.close()
+                
+                conversion_result = convert_to_pdf(normalized_source_path, temp_pdf_path)
+                if conversion_result == "unsupported":
+                    raise SessionCommandError(
+                        code="IMPORT_MATERIAL_CONVERSION_UNSUPPORTED",
+                        message=f"Cannot convert {path_obj.suffix} to PDF",
+                        guidance="Only PDF, PPT, and PPTX formats are supported.",
+                        exit_code=1,
+                    )
+                converted = True
+                source_for_merge = temp_pdf_path
+            else:
+                source_for_merge = normalized_source_path
+            
+            # Merge with existing material if exists
+            existing_material = session.get("material_file_path")
             merged = False
+            
             if existing_material:
                 existing_path = metadata_root / existing_material
                 if existing_path.exists() and existing_path.suffix.lower() == ".pdf":
                     self._merge_pdfs(
                         str(existing_path), 
-                        normalized_source_path, 
-                        str(metadata_root / persisted_path)
+                        source_for_merge, 
+                        str(final_pdf_path)
                     )
                     merged = True
                 else:
                     self._copy_import_audio(
-                        source_path=normalized_source_path,
+                        source_path=source_for_merge,
                         destination_relative_path=persisted_path,
                     )
             else:
                 self._copy_import_audio(
-                    source_path=normalized_source_path,
+                    source_path=source_for_merge,
                     destination_relative_path=persisted_path,
                 )
+                
+        except DocumentConversionError as exc:
+            raise SessionCommandError(
+                code="IMPORT_MATERIAL_CONVERSION_ERROR",
+                message=str(exc),
+                guidance="Check if required libraries are installed: pip install python-pptx reportlab pillow",
+                exit_code=1,
+            )
         except OSError as exc:
             raise SessionCommandError(
                 code="IMPORT_MATERIAL_COPY_ERROR",
@@ -645,12 +687,30 @@ class SessionService:
                 guidance="Install missing dependencies to merge PDFs.",
                 exit_code=1,
             )
+        finally:
+            # Clean up temporary PDF
+            if temp_pdf_path and Path(temp_pdf_path).exists():
+                try:
+                    Path(temp_pdf_path).unlink()
+                except OSError:
+                    pass
 
         session["material_file_path"] = persisted_path
         session.setdefault("timestamps", {})["material_imported_at"] = self._utc_now()
         
         saved = self._persist_or_raise(session)
-        msg_action = "merged with existing material" if merged else "imported successfully"
+        
+        # Build descriptive message
+        msg_parts = []
+        if converted:
+            msg_parts.append(f"converted from {path_obj.suffix.upper()}")
+        if merged:
+            msg_parts.append("merged with existing material")
+        else:
+            msg_parts.append("imported successfully")
+        
+        msg_action = " and ".join(msg_parts) if msg_parts else "imported successfully"
+        
         return CommandResult(
             command="material import",
             payload=saved,

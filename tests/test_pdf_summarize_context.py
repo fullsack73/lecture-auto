@@ -67,7 +67,7 @@ def test_import_material_rejects_non_pdf(mock_workspace: Path) -> None:
     source_txt = mock_workspace / "source_document.txt"
     source_txt.write_text("TEXT CONTENT")
 
-    with pytest.raises(SessionCommandError, match="Only PDF files are supported"):
+    with pytest.raises(SessionCommandError, match="Unsupported file format"):
         service.import_material(session_id="session-123", material_path=str(source_txt))
 
 

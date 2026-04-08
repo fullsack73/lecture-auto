@@ -1,9 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "WebSearch",
-      "Bash(pytest:*)",
-      "Bash(tee test_output.log)"
-    ]
-  }
-}
