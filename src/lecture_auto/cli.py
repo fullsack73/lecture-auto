@@ -114,6 +114,8 @@ def _build_service() -> SessionService:
         or config_llm_provider
         or "gemini"
     ).strip().lower()
+    if llm_provider == "local":
+        llm_provider = "ollama"
     
     # For Gemini provider
     if llm_provider == "gemini":

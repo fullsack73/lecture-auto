@@ -130,6 +130,32 @@ def test_build_service_env_overrides_llm_model_and_thinking(tmp_path: Path, monk
     assert used_config.thinking_level == "low"
 
 
+def test_build_service_loads_local_llm_provider_alias_from_config(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("LLM_PROVIDER", raising=False)
+
+    config_path = _config_path(tmp_path)
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(
+        json.dumps(
+            {
+                "llm_provider": "local",
+                "llm_model_name": "gemma4:31b-cloud",
+                "llm_thinking_level": "medium",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with patch("lecture_auto.cli.OllamaLLMAdapter") as adapter_cls:
+        service = _build_service()
+
+    assert service.llm_adapter is adapter_cls.return_value
+    used_config = adapter_cls.call_args.args[0]
+    assert used_config.provider == "ollama"
+    assert used_config.model_name == "gemma4:31b-cloud"
+
+
 def test_cli_config_set_persists_dynaudnorm(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
 
@@ -226,3 +252,23 @@ def test_tui_menu_config_saves_stt_local_model(monkeypatch) -> None:
 
     assert changed is True
     assert saved["stt_local_model"] == "distil-large-v3"
+
+
+def test_tui_menu_config_saves_llm_provider(monkeypatch) -> None:
+    saved: dict = {}
+
+    def _save(data: dict) -> None:
+        saved.clear()
+        saved.update(data)
+
+    with patch("lecture_auto.tui._load_config", return_value={}):
+        with patch("lecture_auto.tui._save_config", side_effect=_save):
+            with patch(
+                "lecture_auto.tui._select",
+                side_effect=["set", "llm_provider", "__save__", "__back__"],
+            ):
+                with patch("lecture_auto.tui._select_llm_provider", return_value="local"):
+                    changed = _menu_config()
+
+    assert changed is True
+    assert saved["llm_provider"] == "local"

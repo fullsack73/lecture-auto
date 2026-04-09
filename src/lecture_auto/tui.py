@@ -162,6 +162,27 @@ def _select_llm_model(current: str = "") -> str | None:
     return _select("Select LLM model", choices)
 
 
+def _select_llm_provider(current: str = "") -> str | None:
+    """Select an LLM provider for persisted config."""
+    normalized_current = (current or "").strip().lower()
+    choices = [
+        questionary.Choice(
+            title="Gemini (cloud API)",
+            value="gemini",
+            checked=normalized_current == "gemini" or normalized_current == "",
+        ),
+        questionary.Choice(
+            title="Local (Ollama)",
+            value="local",
+            checked=normalized_current in {"local", "ollama"},
+        ),
+        questionary.Separator(),
+        questionary.Choice(title="Clear value", value="__clear__"),
+        questionary.Choice(title="Cancel", value="__cancel__"),
+    ]
+    return _select("Select LLM provider", choices)
+
+
 def _select_llm_thinking_level(current: str = "") -> str | None:
     """Select LLM thinking level for persisted config."""
     choices = [
@@ -746,6 +767,7 @@ def _menu_config() -> bool:
                 ("google_location", "Google Cloud location (default: us)"),
                 "── LLM (Large Language Model) ──",
                 ("llm_language", "LLM language (e.g. korean)"),
+                ("llm_provider", "LLM provider (gemini or local)"),
                 ("llm_model_name", "LLM model"),
                 ("llm_thinking_level", "LLM thinking level"),
                 "── API Keys ──",
@@ -812,6 +834,12 @@ def _menu_config() -> bool:
                         continue
                     if value == "__clear__":
                         value = ""
+                elif selected_key == "llm_provider":
+                    value = _select_llm_provider(data.get(selected_key, "") or "")
+                    if value in (None, "__cancel__"):
+                        continue
+                    if value == "__clear__":
+                        value = ""
                 elif selected_key == "llm_thinking_level":
                     value = _select_llm_thinking_level(data.get(selected_key, "") or "")
                     if value in (None, "__cancel__"):
@@ -836,6 +864,12 @@ def _menu_config() -> bool:
                     if selected_key == "stt_mode" and value not in ("api", "local"):
                         typer.echo("Invalid STT mode. Must be 'api' or 'local'. Skipping.")
                         continue
+                    if selected_key == "llm_provider":
+                        normalized_provider = value.lower()
+                        if normalized_provider not in ("gemini", "local", "ollama"):
+                            typer.echo("Invalid LLM provider. Must be 'gemini' or 'local'. Skipping.")
+                            continue
+                        value = "local" if normalized_provider == "ollama" else normalized_provider
                     if selected_key == "use_dynaudnorm":
                         if value.lower() not in ("true", "false", "1", "0", "yes", "no"):
                             typer.echo("Invalid boolean for use_dynaudnorm. Skipping.")
