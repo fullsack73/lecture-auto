@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m pytest tests/test_stt_gap_analysis.py -v)"
+    ]
+  }
+}

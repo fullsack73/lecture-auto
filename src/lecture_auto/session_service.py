@@ -912,7 +912,10 @@ class SessionService:
 
         output_text = transcript_text or ""
         if transcript_result and transcript_result.segments:
-            output_text = transcript_result.to_diarized_markdown()
+            if transcript_result.mode == "local":
+                output_text = transcript_result.to_plain_text()
+            else:
+                output_text = transcript_result.to_diarized_markdown()
 
         transcript_relative_path = self.store.build_raw_transcript_path(
             session_id,

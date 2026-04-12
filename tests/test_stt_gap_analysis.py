@@ -34,6 +34,23 @@ class FakeDiarizedAdapter:
         )
 
 
+class FakeLocalAdapter:
+    """Adapter that returns segments in local mode for integration testing."""
+
+    def transcribe(self, *, audio_path: str) -> STTResult:
+        return STTResult(
+            transcript_text="어제는? 그렇죠? 이거 많이 볼게요.",
+            provider="faster-whisper",
+            mode="local",
+            language="ko",
+            segments=[
+                DiarizedSegment(speaker="Speaker 1", start_time=28.0, end_time=32.0, text="어제는? 그렇죠?"),
+                DiarizedSegment(speaker="Speaker 1", start_time=32.0, end_time=34.0, text="이거 많이 볼게요."),
+                DiarizedSegment(speaker="Speaker 1", start_time=34.0, end_time=38.0, text="Price하고 Value. 그렇죠?"),
+            ],
+        )
+
+
 def _service(tmp_path: Path, *, config: STTConfig, api_adapter=None, local_adapter=None) -> SessionService:
     store = SessionMetadataStore(tmp_path / "config" / "sessions.json")
     return SessionService(
@@ -63,6 +80,28 @@ def test_diarized_transcript_written_as_markdown(tmp_path: Path) -> None:
     content = transcript.read_text(encoding="utf-8")
     assert "**Speaker 1**" in content
     assert "**Speaker 2**" in content
+
+
+def test_local_transcript_written_as_plain_text(tmp_path: Path) -> None:
+    """Local mode produces plain text without timestamps or speaker labels."""
+    service = _service(
+        tmp_path,
+        config=STTConfig(mode="local", local_model_name="large-v3"),
+        local_adapter=FakeLocalAdapter(),
+    )
+    service.session_create("session-local-01", "2026-04-12")
+    source = tmp_path / "sample.wav"
+    source.write_bytes(b"wav")
+    service.import_audio("session-local-01", str(source))
+
+    service.transcribe_session("session-local-01")
+
+    transcript = tmp_path / "transcripts" / "session-local-01-raw.md"
+    assert transcript.exists()
+    content = transcript.read_text(encoding="utf-8")
+    assert "어제는? 그렇죠? 이거 많이 볼게요. Price하고 Value. 그렇죠?" == content
+    assert "**Speaker" not in content
+    assert "[00:" not in content
 
 
 def test_config_validation_rejects_whitespace_only_api_key() -> None:
