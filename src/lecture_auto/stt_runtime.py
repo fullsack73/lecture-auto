@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Protocol
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
 class STTRuntimeError(RuntimeError):
@@ -93,6 +94,29 @@ class LocalSTTRuntimeAdapter:
             provider="local-model",
             mode="local",
         )
+
+    def batch_transcribe(self, *, audio_paths: list[str]) -> dict[str, STTResult]:
+        """Transcribe multiple audio files in parallel."""
+        if not audio_paths:
+            raise STTConfigError("Audio paths are required for batch transcription.")
+
+        results: dict[str, STTResult] = {}
+        with ThreadPoolExecutor() as executor:
+            future_to_audio = {
+                executor.submit(self.transcribe, audio_path=path): path for path in audio_paths
+            }
+            for future in as_completed(future_to_audio):
+                audio_path = future_to_audio[future]
+                try:
+                    results[audio_path] = future.result()
+                except Exception as e:
+                    results[audio_path] = STTResult(
+                        transcript_text=f"Error: {e}",
+                        provider="local-model",
+                        mode="local",
+                    )
+
+        return results
 
 
 class APISTTRuntimeAdapter:
