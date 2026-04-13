@@ -3,6 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Protocol
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import subprocess
+import os
+import tempfile
+import math
 
 
 class STTRuntimeError(RuntimeError):
@@ -75,6 +79,65 @@ def _format_ts(seconds: float) -> str:
     return f"{minutes:02d}:{secs:02d}"
 
 
+def _get_audio_duration(file_path: str) -> float:
+    """Get audio duration using ffprobe."""
+    try:
+        result = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "default=noprint_wrappers=1:nokey=1",
+                file_path,
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return float(result.stdout.strip())
+    except Exception as e:
+        raise STTAudioDecodeError(f"Failed to get audio duration: {e}")
+
+
+def _split_audio(file_path: str, chunk_duration: int = 600) -> list[str]:
+    """Split audio into chunks using ffmpeg."""
+    duration = _get_audio_duration(file_path)
+    chunks = []
+    num_chunks = math.ceil(duration / chunk_duration)
+
+    base_dir = tempfile.mkdtemp(prefix="stt_chunks_")
+
+    for i in range(num_chunks):
+        start_time = i * chunk_duration
+        out_path = os.path.join(base_dir, f"chunk_{i:03d}.wav")
+        try:
+            subprocess.run(
+                [
+                    "ffmpeg",
+                    "-y",
+                    "-i",
+                    file_path,
+                    "-ss",
+                    str(start_time),
+                    "-t",
+                    str(chunk_duration),
+                    "-c",
+                    "copy",
+                    out_path,
+                ],
+                capture_output=True,
+                check=True,
+            )
+            chunks.append(out_path)
+        except subprocess.CalledProcessError as e:
+            raise STTAudioDecodeError(f"Failed to split audio: {e.stderr.decode()}")
+
+    return chunks
+
+
 class STTRuntimeAdapter(Protocol):
     def transcribe(self, *, audio_path: str) -> STTResult:
         ...
@@ -117,6 +180,76 @@ class LocalSTTRuntimeAdapter:
                     )
 
         return results
+
+    def transcribe_parallel(self, *, audio_path: str, chunk_duration: int = 600, max_workers: int = 4) -> STTResult:
+        """Transcribe a single audio file by splitting it into chunks and processing them in parallel."""
+        if not audio_path.strip():
+            raise STTConfigError("Audio path is required for transcription.")
+
+        chunks = _split_audio(audio_path, chunk_duration=chunk_duration)
+        chunk_results: dict[int, STTResult] = {}
+
+        try:
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                future_to_idx = {
+                    executor.submit(self.transcribe, audio_path=chunk): idx
+                    for idx, chunk in enumerate(chunks)
+                }
+
+                for future in as_completed(future_to_idx):
+                    idx = future_to_idx[future]
+                    try:
+                        chunk_results[idx] = future.result()
+                    except Exception as e:
+                        # Depending on requirements, we could fail the whole process or just insert an error mark
+                        chunk_results[idx] = STTResult(
+                            transcript_text=f"[Error processing chunk {idx}: {e}]",
+                            provider=self.model_name,
+                            mode="local"
+                        )
+
+            # Combine results in correct order
+            combined_text = ""
+            combined_segments = []
+
+            for i in range(len(chunks)):
+                res = chunk_results[i]
+
+                # Append text
+                if combined_text:
+                    combined_text += " "
+                combined_text += res.transcript_text
+
+                # Offset segment timestamps
+                offset = i * chunk_duration
+                for seg in res.segments:
+                    # Create a new segment to avoid mutating the original
+                    new_seg = DiarizedSegment(
+                        speaker=seg.speaker,
+                        start_time=seg.start_time + offset,
+                        end_time=seg.end_time + offset,
+                        text=seg.text
+                    )
+                    combined_segments.append(new_seg)
+
+            return STTResult(
+                transcript_text=combined_text,
+                provider="local-model",
+                mode="local",
+                segments=combined_segments
+            )
+
+        finally:
+            # Clean up chunks
+            for chunk in chunks:
+                try:
+                    os.remove(chunk)
+                except OSError:
+                    pass
+            try:
+                os.rmdir(os.path.dirname(chunks[0]))
+            except (OSError, IndexError):
+                pass
 
 
 class APISTTRuntimeAdapter:
