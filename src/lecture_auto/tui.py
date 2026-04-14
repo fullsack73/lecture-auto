@@ -142,8 +142,13 @@ def _select_stt_local_model(current: str = "") -> str | None:
     return manual
 
 
-def _select_llm_model(current: str = "") -> str | None:
-    """Select an LLM model for persisted config."""
+def _select_llm_model(provider: str = "", current: str = "") -> str | None:
+    """Select an LLM model for persisted config.
+    If provider is 'local', allow manual input. Otherwise use Gemini presets.
+    """
+    if provider == "local":
+        return _ask("LLM model name (e.g. llama3, mistral)", default=current)
+
     choices = [
         questionary.Choice(
             title="Flash-Lite (cheaper, faster)",
@@ -829,7 +834,10 @@ def _menu_config() -> bool:
                     if value == "__clear__":
                         value = ""
                 elif selected_key == "llm_model_name":
-                    value = _select_llm_model(data.get(selected_key, "") or "")
+                    value = _select_llm_model(
+                        provider=data.get("llm_provider", ""),
+                        current=data.get(selected_key, "") or "",
+                    )
                     if value in (None, "__cancel__"):
                         continue
                     if value == "__clear__":
