@@ -65,68 +65,51 @@ def convert_to_pdf(source_path: str, output_path: str) -> ConversionResult:
 
 def _convert_pptx_to_pdf(pptx_path: str, pdf_path: str) -> ConversionResult:
     """
-    Convert PPT/PPTX to PDF using python-pptx and reportlab.
-    
-    This is a simplified conversion that extracts slides as images
-    and creates a PDF. For better results, consider using LibreOffice
-    or other dedicated converters.
+    Convert PPT/PPTX to PDF using LibreOffice headless mode for high fidelity.
     """
+    import subprocess
+    import shutil
+    from pathlib import Path
+
     try:
-        from pptx import Presentation
-        from reportlab.lib.pagesizes import letter
-        from reportlab.pdfgen import canvas
-        from PIL import Image
-        import io
-    except ImportError as exc:
-        raise DocumentConversionError(
-            "Required libraries not installed. Run: pip install python-pptx reportlab pillow"
-        ) from exc
-    
-    try:
-        # Load the presentation
-        prs = Presentation(pptx_path)
-        
-        if not prs.slides:
-            raise DocumentConversionError("Presentation has no slides")
-        
-        # Create PDF
-        c = canvas.Canvas(pdf_path, pagesize=letter)
-        width, height = letter
-        
-        # For simplicity, we'll create a text-based PDF with slide content
-        # A full implementation would render slides as images
-        for idx, slide in enumerate(prs.slides, 1):
-            # Extract text from slide
-            text_content = []
-            for shape in slide.shapes:
-                if hasattr(shape, "text") and shape.text:
-                    text_content.append(shape.text)
-            
-            # Write to PDF
-            c.setFont("Helvetica-Bold", 16)
-            c.drawString(50, height - 50, f"Slide {idx}")
-            
-            c.setFont("Helvetica", 12)
-            y_position = height - 100
-            for text in text_content:
-                # Simple text wrapping
-                lines = _wrap_text(text, 80)
-                for line in lines:
-                    if y_position < 50:
-                        c.showPage()
-                        c.setFont("Helvetica", 12)
-                        y_position = height - 50
-                    c.drawString(50, y_position, line[:100])
-                    y_position -= 20
-            
-            # New page for next slide
-            if idx < len(prs.slides):
-                c.showPage()
-        
-        c.save()
+        # Find LibreOffice binary
+        libreoffice_bin = shutil.which("libreoffice") or shutil.which("soffice")
+        if not libreoffice_bin:
+            raise DocumentConversionError(
+                "LibreOffice is not installed. Please install LibreOffice to enable high-fidelity document conversion."
+            )
+
+        source = Path(pptx_path)
+        output_dir = source.parent
+
+        # LibreOffice command: --convert-to pdf creates a file with the same name but .pdf extension
+        # in the specified output directory.
+        cmd = [
+            libreoffice_bin,
+            "--headless",
+            "--convert-to", "pdf",
+            "--outdir", str(output_dir),
+            str(source)
+        ]
+
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        if result.returncode != 0:
+            raise DocumentConversionError(f"LibreOffice conversion failed: {result.stderr}")
+
+        # LibreOffice saves as source_filename.pdf in the output_dir.
+        # We need to move/rename it to the requested pdf_path.
+        expected_pdf = output_dir / (source.stem + ".pdf")
+        if not expected_pdf.exists():
+            raise DocumentConversionError(f"Conversion succeeded but output file not found: {expected_pdf}")
+
+        shutil.move(str(expected_pdf), pdf_path)
         return "converted"
-        
+
+    except subprocess.TimeoutExpired:
+        raise DocumentConversionError("LibreOffice conversion timed out after 60 seconds.")
     except Exception as exc:
+        if isinstance(exc, DocumentConversionError):
+            raise exc
         raise DocumentConversionError(f"Failed to convert PPTX to PDF: {str(exc)}") from exc
 
 

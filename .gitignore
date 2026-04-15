@@ -3,3 +3,5 @@ src/lecture_auto.egg-info/
 src/lecture_auto/__pycache__/
 tests/__pycache__/*
 .github/*
+.openclaude/*
+.agent-os/*
