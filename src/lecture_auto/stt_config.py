@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Literal
 
 STTMode = Literal["local", "api"]
 
-SUPPORTED_API_PROVIDERS = {"openai-compatible", "deepgram", "google-chirp3"}
+SUPPORTED_API_PROVIDERS = {"openai-compatible", "deepgram"}
 
 
 @dataclass
@@ -18,8 +18,6 @@ class STTConfig:
     local_model_name: str | None = "base"
     language: str | None = None
     diarization: bool = False
-    google_project_id: str | None = None
-    google_location: str = "us"
     use_dynaudnorm: bool = False
     dynaudnorm_f: int | None = None
     dynaudnorm_g: int | None = None
@@ -33,12 +31,7 @@ class STTConfig:
         if self.mode == "api":
             if not self.api_provider or not self.api_provider.strip():
                 raise ValueError("API provider is required when STT mode is 'api'.")
-            if self.api_provider == "google-chirp3":
-                if not self.google_project_id or not self.google_project_id.strip():
-                    raise ValueError(
-                        "google_project_id is required when using the 'google-chirp3' STT provider."
-                    )
-            elif not self.api_key or not self.api_key.strip():
+            if not self.api_key or not self.api_key.strip():
                 raise ValueError("API key is required when STT mode is 'api'.")
 
         if self.mode == "local":

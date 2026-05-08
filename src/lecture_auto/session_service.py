@@ -871,7 +871,7 @@ class SessionService:
 
         adapter = self._build_stt_adapter()
         adapter_audio_path = audio_relative_path
-        if mode == "api" and self.stt_config.api_provider in ("deepgram", "google-chirp3"):
+        if mode == "api" and self.stt_config.api_provider == "deepgram":
             adapter_audio_path = self._resolve_audio_input_path(audio_relative_path)
 
         transcript_text: str | None = None
@@ -1504,10 +1504,6 @@ class SessionService:
         if self.stt_config.api_provider == "deepgram":
             from lecture_auto.deepgram_adapter import DeepgramSTTRuntimeAdapter
             return DeepgramSTTRuntimeAdapter(config=self.stt_config)
-
-        if self.stt_config.api_provider == "google-chirp3":
-            from lecture_auto.google_chirp3_adapter import GoogleChirp3STTRuntimeAdapter
-            return GoogleChirp3STTRuntimeAdapter(config=self.stt_config)
 
         return APISTTRuntimeAdapter(
             provider=self.stt_config.api_provider or "openai-compatible",

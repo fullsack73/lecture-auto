@@ -58,52 +58,6 @@ def test_stt_config_validation_passes_with_deepgram_provider() -> None:
     config.validate()
 
 
-def test_stt_config_google_chirp3_provider_is_supported() -> None:
-    assert "google-chirp3" in SUPPORTED_API_PROVIDERS
-
-
-def test_stt_config_google_chirp3_validation_passes_with_project_id() -> None:
-    config = STTConfig(
-        mode="api",
-        api_provider="google-chirp3",
-        api_key="AIzaTest",
-        google_project_id="my-project",
-    )
-    config.validate()
-
-
-def test_stt_config_google_chirp3_validation_passes_without_api_key() -> None:
-    config = STTConfig(
-        mode="api",
-        api_provider="google-chirp3",
-        api_key=None,
-        google_project_id="my-project",
-    )
-    config.validate()
-
-
-def test_stt_config_google_chirp3_validation_requires_project_id() -> None:
-    config = STTConfig(
-        mode="api",
-        api_provider="google-chirp3",
-        api_key="AIzaTest",
-        google_project_id=None,
-    )
-    with pytest.raises(ValueError, match="google_project_id is required"):
-        config.validate()
-
-
-def test_stt_config_google_chirp3_validation_rejects_blank_project_id() -> None:
-    config = STTConfig(
-        mode="api",
-        api_provider="google-chirp3",
-        api_key="AIzaTest",
-        google_project_id="   ",
-    )
-    with pytest.raises(ValueError, match="google_project_id is required"):
-        config.validate()
-
-
 def test_stt_result_segments_default_empty() -> None:
     result = STTResult(transcript_text="hello", provider="test", mode="api")
     assert result.segments == []

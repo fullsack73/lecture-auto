@@ -40,6 +40,16 @@ def test_cli_config_set_rejects_invalid_stt_mode(tmp_path: Path, monkeypatch) ->
     assert "STT mode must be 'api' or 'local'." in (result.output or "")
 
 
+def test_cli_config_set_rejects_unsupported_stt_api_provider(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    result = runner.invoke(app, ["config", "set", "--stt-api-provider", "unsupported-provider"])
+
+    assert result.exit_code == 1
+    assert "STT API provider must be one of" in (result.output or "")
+    assert not _config_path(tmp_path).exists()
+
+
 def test_build_service_loads_stt_mode_and_local_model_from_config(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.delenv("STT_MODE", raising=False)

@@ -12,7 +12,7 @@ from lecture_auto.llm_adapter import GeminiLLMAdapter, OllamaLLMAdapter, LLMConf
 from lecture_auto.llm_config import LLMConfig
 from lecture_auto.session_metadata_store import SessionMetadataStore
 from lecture_auto.session_service import SessionCommandError, SessionService
-from lecture_auto.stt_config import STTConfig
+from lecture_auto.stt_config import STTConfig, SUPPORTED_API_PROVIDERS
 from lecture_auto.library_service import LibraryService
 
 app = typer.Typer(help="Lecture automation CLI", invoke_without_command=True)
@@ -65,11 +65,10 @@ def _build_service() -> SessionService:
     config_llm_thinking_level = None
     config_audio_format = None
     config_capture_source = None
-    config_google_project_id = None
-    config_google_location = None
     config_use_dynaudnorm = False
     config_dynaudnorm_f = None
     config_dynaudnorm_g = None
+    config_gain_db = None
     config_path = _get_global_config_path()
     
     if config_path.exists():
@@ -89,8 +88,6 @@ def _build_service() -> SessionService:
                 config_llm_thinking_level = config_data.get("llm_thinking_level")
                 config_audio_format = config_data.get("audio_format")
                 config_capture_source = config_data.get("capture_source")
-                config_google_project_id = config_data.get("google_project_id")
-                config_google_location = config_data.get("google_location")
                 config_use_dynaudnorm = config_data.get("use_dynaudnorm", False)
                 config_dynaudnorm_f = config_data.get("dynaudnorm_f")
                 config_dynaudnorm_g = config_data.get("dynaudnorm_g")
@@ -191,8 +188,6 @@ def _build_service() -> SessionService:
         api_key=os.environ.get("STT_API_KEY") or config_stt_api_key,
         local_model_name=os.environ.get("STT_LOCAL_MODEL") or config_stt_local_model or "base",
         language=config_stt_language,
-        google_project_id=os.environ.get("GOOGLE_PROJECT_ID") or config_google_project_id,
-        google_location=os.environ.get("GOOGLE_LOCATION") or config_google_location or "us",
         use_dynaudnorm=resolved_use_dynaudnorm,
         dynaudnorm_f=resolved_dynaudnorm_f,
         dynaudnorm_g=resolved_dynaudnorm_g,
@@ -414,7 +409,7 @@ def config_set(
     workspace: str | None = typer.Option(None, "--workspace", "-w", help="Default workspace directory"),
     stt_language: str | None = typer.Option(None, "--stt-language", "-stt", help="Default language for STT transcription (e.g. korean)"),
     llm_language: str | None = typer.Option(None, "--llm-language", "-llm", help="Default language for summaries and generated notes (e.g. korean)"),
-    stt_api_provider: str | None = typer.Option(None, "--stt-api-provider", help="STT API provider (e.g. deepgram, google-chirp3)"),
+    stt_api_provider: str | None = typer.Option(None, "--stt-api-provider", help="STT API provider (e.g. deepgram)"),
     stt_api_key: str | None = typer.Option(None, "--stt-api-key", help="STT API key"),
     stt_mode: str | None = typer.Option(None, "--stt-mode", help="STT mode (api or local)"),
     stt_local_model: str | None = typer.Option(None, "--stt-local-model", help="Local Whisper model name (e.g. base, medium, large-v3)"),
@@ -423,7 +418,6 @@ def config_set(
     llm_thinking_level: str | None = typer.Option(None, "--llm-thinking-level", help="LLM thinking level (minimal, low, medium, high)"),
     audio_format: str | None = typer.Option(None, "--audio-format", help="Default audio format for recordings (wav or mp3)"),
     capture_source: str | None = typer.Option(None, "--capture-source", help="Capture source (microphone or system_audio)"),
-    google_project_id: str | None = typer.Option(None, "--google-project-id", help="Google Cloud project ID (required for google-chirp3 STT provider)"),
     use_dynaudnorm: bool | None = typer.Option(None, "--use-dynaudnorm/--no-use-dynaudnorm", help="Apply dynaudnorm audio filter during STT pre-processing."),
     dynaudnorm_f: int | None = typer.Option(None, "--dynaudnorm-f", help="dynaudnorm 'f' parameter (10 to 8000)."),
     dynaudnorm_g: int | None = typer.Option(None, "--dynaudnorm-g", help="dynaudnorm 'g' parameter (odd integer 3 to 301)."),
@@ -455,7 +449,14 @@ def config_set(
         updated = True
 
     if stt_api_provider is not None:
-        config_data["stt_api_provider"] = stt_api_provider
+        normalized_provider = stt_api_provider.strip().lower()
+        if normalized_provider not in SUPPORTED_API_PROVIDERS:
+            typer.echo(
+                f"STT API provider must be one of {sorted(SUPPORTED_API_PROVIDERS)}.",
+                err=True,
+            )
+            raise typer.Exit(code=1)
+        config_data["stt_api_provider"] = normalized_provider
         typer.echo(f"Global STT API provider set to: {config_data['stt_api_provider']}")
         updated = True
 
@@ -530,11 +531,6 @@ def config_set(
             raise typer.Exit(code=1)
         config_data["capture_source"] = normalized_source
         typer.echo(f"Global capture source set to: {config_data['capture_source']}")
-        updated = True
-
-    if google_project_id is not None:
-        config_data["google_project_id"] = google_project_id
-        typer.echo(f"Google Cloud project ID set to: {config_data['google_project_id']}")
         updated = True
 
     if use_dynaudnorm is not None:
