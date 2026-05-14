@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from typing import Protocol
 
-from lecture_auto.llm_config import LLMConfig
+from lecture_auto.llm_config import LLMConfig, normalize_gemini_model_name
 
 logger = logging.getLogger(__name__)
 
@@ -55,15 +55,7 @@ class GeminiLLMAdapter:
     @staticmethod
     def _normalize_model_name(model_name: str) -> str:
         """Normalizes common Gemini model aliases to API-accepted IDs."""
-        normalized = (model_name or "").strip()
-        if normalized.startswith("models/"):
-            normalized = normalized.split("/", 1)[1]
-
-        # Gemini 3 preview IDs use `gemini-3-*`, not `gemini-3.0-*`.
-        if normalized.startswith("gemini-3.0-"):
-            normalized = normalized.replace("gemini-3.0-", "gemini-3-", 1)
-
-        return normalized
+        return normalize_gemini_model_name(model_name)
 
     def refine_transcript(self, raw_text: str, context_topic: str | None = None) -> str:
         """Refines the transcript in chunks using the Gemini model."""
@@ -374,4 +366,3 @@ class OllamaLLMAdapter:
             return ", ".join(model_names) if model_names else "none"
         except Exception:
             return "unknown"
-

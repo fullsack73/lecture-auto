@@ -139,7 +139,7 @@ Supported `config set` options:
 | `--stt-api-key` | STT API key |
 | `--stt-local-model` | Local Whisper model, for example `base`, `medium`, or `large-v3` |
 | `--gemini-api-key` | Gemini API key |
-| `--llm-model` | Gemini model, currently `gemini-3.1-flash-lite-preview` or `gemini-3.1-pro-preview` |
+| `--llm-model` | Gemini model, currently `gemini-3.1-flash-lite`, `gemini-3-flash-preview`, or `gemini-3.1-pro-preview` |
 | `--llm-thinking-level` | `minimal`, `low`, `medium`, or `high` |
 | `--audio-format` | Recording format: `wav` or `mp3` |
 | `--capture-source` | `microphone` or `system_audio` |
@@ -259,7 +259,7 @@ Gemini is the default provider. Configure it with:
 ```bash
 lecture-auto config set \
   --gemini-api-key "your-key" \
-  --llm-model gemini-3.1-flash-lite-preview \
+  --llm-model gemini-3.1-flash-lite \
   --llm-thinking-level medium
 ```
 

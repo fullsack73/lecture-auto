@@ -17,6 +17,7 @@ import typer
 
 from lecture_auto.cli_output import format_command_error, format_command_output
 from lecture_auto.library_service import LibraryService
+from lecture_auto.llm_config import DEFAULT_GEMINI_MODEL, normalize_gemini_model_name
 from lecture_auto.session_service import SessionCommandError
 
 # ── Styling ────────────────────────────────────────────────────────────────────
@@ -144,16 +145,22 @@ def _select_llm_model(provider: str = "", current: str = "") -> str | None:
     if provider == "local":
         return _ask("LLM model name (e.g. llama3, mistral)", default=current)
 
+    normalized_current = normalize_gemini_model_name(current)
     choices = [
         questionary.Choice(
-            title="Flash-Lite (cheaper, faster)",
-            value="gemini-3.1-flash-lite-preview",
-            checked=current == "gemini-3.1-flash-lite-preview",
+            title="Flash-Lite (recommended stable)",
+            value=DEFAULT_GEMINI_MODEL,
+            checked=normalized_current == DEFAULT_GEMINI_MODEL,
         ),
         questionary.Choice(
-            title="Pro (more capable)",
+            title="Flash (more capable, preview)",
+            value="gemini-3-flash-preview",
+            checked=normalized_current == "gemini-3-flash-preview",
+        ),
+        questionary.Choice(
+            title="Pro (most capable, preview)",
             value="gemini-3.1-pro-preview",
-            checked=current == "gemini-3.1-pro-preview",
+            checked=normalized_current == "gemini-3.1-pro-preview",
         ),
         questionary.Separator(),
         questionary.Choice(title="Clear value", value="__clear__"),

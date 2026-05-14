@@ -30,6 +30,11 @@ def test_llm_config_validation_passes_with_api_key() -> None:
     config.validate()
 
 
+def test_llm_config_defaults_to_stable_gemini_flash_lite() -> None:
+    config = LLMConfig(api_key="gemini-key-123")
+    assert config.model_name == "gemini-3.1-flash-lite"
+
+
 def test_llm_config_validation_rejects_too_small_chunk_size() -> None:
     config = LLMConfig(api_key="gemini-key-123", chunk_size=100)
     with pytest.raises(ValueError, match="chunk_size must be at least 500"):
@@ -93,4 +98,11 @@ def test_model_name_normalization_strips_models_prefix() -> None:
     assert (
         GeminiLLMAdapter._normalize_model_name("models/gemini-3-flash-preview")
         == "gemini-3-flash-preview"
+    )
+
+
+def test_model_name_normalization_maps_deprecated_flash_lite_preview() -> None:
+    assert (
+        GeminiLLMAdapter._normalize_model_name("gemini-3.1-flash-lite-preview")
+        == "gemini-3.1-flash-lite"
     )

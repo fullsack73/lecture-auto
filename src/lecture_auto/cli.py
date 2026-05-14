@@ -9,7 +9,12 @@ import typer
 from lecture_auto.capture_runtime import FFmpegCaptureRuntimeAdapter
 from lecture_auto.cli_output import format_command_error, format_command_output
 from lecture_auto.llm_adapter import GeminiLLMAdapter, OllamaLLMAdapter, LLMConfigError
-from lecture_auto.llm_config import LLMConfig
+from lecture_auto.llm_config import (
+    DEFAULT_GEMINI_MODEL,
+    GEMINI_MODEL_CHOICES,
+    LLMConfig,
+    normalize_gemini_model_name,
+)
 from lecture_auto.session_metadata_store import SessionMetadataStore
 from lecture_auto.session_service import SessionCommandError, SessionService
 from lecture_auto.stt_config import STTConfig, SUPPORTED_API_PROVIDERS
@@ -122,8 +127,9 @@ def _build_service() -> SessionService:
                 model_name = (
                     os.environ.get("LLM_MODEL")
                     or config_llm_model_name
-                    or "gemini-3.1-flash-lite-preview"
+                    or DEFAULT_GEMINI_MODEL
                 )
+                model_name = normalize_gemini_model_name(model_name)
                 thinking_level = (
                     os.environ.get("LLM_THINKING_LEVEL")
                     or config_llm_thinking_level
@@ -414,7 +420,7 @@ def config_set(
     stt_mode: str | None = typer.Option(None, "--stt-mode", help="STT mode (api or local)"),
     stt_local_model: str | None = typer.Option(None, "--stt-local-model", help="Local Whisper model name (e.g. base, medium, large-v3)"),
     gemini_api_key: str | None = typer.Option(None, "--gemini-api-key", help="Gemini API key for LLM"),
-    llm_model_name: str | None = typer.Option(None, "--llm-model", help="LLM model name (gemini-3.1-flash-lite-preview or gemini-3.1-pro-preview)"),
+    llm_model_name: str | None = typer.Option(None, "--llm-model", help="LLM model name (gemini-3.1-flash-lite, gemini-3-flash-preview, or gemini-3.1-pro-preview)"),
     llm_thinking_level: str | None = typer.Option(None, "--llm-thinking-level", help="LLM thinking level (minimal, low, medium, high)"),
     audio_format: str | None = typer.Option(None, "--audio-format", help="Default audio format for recordings (wav or mp3)"),
     capture_source: str | None = typer.Option(None, "--capture-source", help="Capture source (microphone or system_audio)"),
@@ -491,8 +497,8 @@ def config_set(
         updated = True
 
     if llm_model_name is not None:
-        normalized_model = llm_model_name.strip()
-        valid_models = {"gemini-3.1-flash-lite-preview", "gemini-3.1-pro-preview"}
+        normalized_model = normalize_gemini_model_name(llm_model_name)
+        valid_models = set(GEMINI_MODEL_CHOICES)
         if normalized_model not in valid_models:
             typer.echo(
                 f"LLM model must be one of {valid_models}.",

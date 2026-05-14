@@ -50,6 +50,19 @@ def test_cli_config_set_rejects_unsupported_stt_api_provider(tmp_path: Path, mon
     assert not _config_path(tmp_path).exists()
 
 
+def test_cli_config_set_normalizes_deprecated_gemini_flash_lite_model(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    result = runner.invoke(
+        app,
+        ["config", "set", "--llm-model", "gemini-3.1-flash-lite-preview"],
+    )
+
+    assert result.exit_code == 0
+    config_data = json.loads(_config_path(tmp_path).read_text(encoding="utf-8"))
+    assert config_data["llm_model_name"] == "gemini-3.1-flash-lite"
+
+
 def test_build_service_loads_stt_mode_and_local_model_from_config(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.delenv("STT_MODE", raising=False)
@@ -136,7 +149,7 @@ def test_build_service_env_overrides_llm_model_and_thinking(tmp_path: Path, monk
 
     assert service.llm_adapter is adapter_cls.return_value
     used_config = adapter_cls.call_args.args[0]
-    assert used_config.model_name == "gemini-3.1-flash-lite-preview"
+    assert used_config.model_name == "gemini-3.1-flash-lite"
     assert used_config.thinking_level == "low"
 
 

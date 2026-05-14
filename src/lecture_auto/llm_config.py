@@ -3,13 +3,36 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 
+DEFAULT_GEMINI_MODEL = "gemini-3.1-flash-lite"
+GEMINI_MODEL_CHOICES = (
+    DEFAULT_GEMINI_MODEL,
+    "gemini-3-flash-preview",
+    "gemini-3.1-pro-preview",
+)
+GEMINI_MODEL_ALIASES = {
+    "gemini-3.1-flash-lite-preview": DEFAULT_GEMINI_MODEL,
+}
+
+
+def normalize_gemini_model_name(model_name: str) -> str:
+    """Normalize known Gemini aliases and deprecated preview IDs."""
+    normalized = (model_name or "").strip()
+    if normalized.startswith("models/"):
+        normalized = normalized.split("/", 1)[1]
+
+    if normalized.startswith("gemini-3.0-"):
+        normalized = normalized.replace("gemini-3.0-", "gemini-3-", 1)
+
+    return GEMINI_MODEL_ALIASES.get(normalized, normalized)
+
+
 @dataclass
 class LLMConfig:
     """Configuration contract for selecting LLM provider options."""
 
     provider: str = "gemini"  # "gemini" or "ollama"
     api_key: str | None = None
-    model_name: str = "gemini-3.1-flash-lite-preview"
+    model_name: str = DEFAULT_GEMINI_MODEL
     thinking_level: str = "medium"  # "minimal", "low", "medium", "high"
     chunk_size: int = 4000  # Number of characters per chunk for long transcripts
     language: str | None = None
