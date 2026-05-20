@@ -3,6 +3,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from google.genai import types
 from typer.testing import CliRunner
 
 from lecture_auto.cli import app
@@ -115,7 +116,14 @@ def test_gemini_adapter_uploads_and_deletes_file() -> None:
             )
             
         assert res == "Generated Notes with PDF"
-        mock_client.files.upload.assert_called_once_with(file="/fake/path/to.pdf")
+        mock_client.files.upload.assert_called_once()
+        upload_kwargs = mock_client.files.upload.call_args.kwargs
+        assert upload_kwargs["file"] == "/fake/path/to.pdf"
+        assert isinstance(upload_kwargs["config"], types.UploadFileConfig)
+        assert upload_kwargs["config"].mime_type == "application/pdf"
+
+        generate_kwargs = mock_client.models.generate_content.call_args.kwargs
+        assert generate_kwargs["contents"][-1] is mock_upload
         mock_client.files.delete.assert_called_once_with(name="uploaded_file_name_123")
 
 
@@ -140,5 +148,9 @@ def test_gemini_adapter_deletes_file_on_generation_failure() -> None:
                     material_path="/fake/path/to.pdf"
                 )
             
-        mock_client.files.upload.assert_called_once_with(file="/fake/path/to.pdf")
+        mock_client.files.upload.assert_called_once()
+        upload_kwargs = mock_client.files.upload.call_args.kwargs
+        assert upload_kwargs["file"] == "/fake/path/to.pdf"
+        assert isinstance(upload_kwargs["config"], types.UploadFileConfig)
+        assert upload_kwargs["config"].mime_type == "application/pdf"
         mock_client.files.delete.assert_called_once_with(name="uploaded_file_name_123")

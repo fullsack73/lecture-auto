@@ -64,10 +64,13 @@ class GeminiLLMAdapter:
 
         try:
             from google.api_core.exceptions import PermissionDenied, DeadlineExceeded  # type: ignore
-            from google.genai import types  # type: ignore
         except ImportError:
             PermissionDenied = Exception  # type: ignore
             DeadlineExceeded = Exception  # type: ignore
+
+        try:
+            from google.genai import types  # type: ignore
+        except ImportError:
             types = None  # type: ignore
 
         topic_prompt = f"The overall topic or subject is '{context_topic}'. " if context_topic else ""
@@ -143,10 +146,13 @@ class GeminiLLMAdapter:
 
         try:
             from google.api_core.exceptions import PermissionDenied, DeadlineExceeded  # type: ignore
-            from google.genai import types  # type: ignore
         except ImportError:
             PermissionDenied = Exception  # type: ignore
             DeadlineExceeded = Exception  # type: ignore
+
+        try:
+            from google.genai import types  # type: ignore
+        except ImportError:
             types = None  # type: ignore
 
         topic_prompt = f"The lecture topic is '{context_topic}'. " if context_topic else ""
@@ -171,7 +177,12 @@ class GeminiLLMAdapter:
             if material_path:
                 import os
                 if os.path.exists(material_path):
-                    uploaded_file = self.client.files.upload(file=material_path)
+                    upload_kwargs: dict = {"file": material_path}
+                    if types:
+                        upload_kwargs["config"] = types.UploadFileConfig(
+                            mime_type="application/pdf"
+                        )
+                    uploaded_file = self.client.files.upload(**upload_kwargs)
                     contents.append(uploaded_file)
                     system_instructions += " A lecture material PDF has been provided as context. Please actively refer to it for accurately capturing terminology and overall structure."
             

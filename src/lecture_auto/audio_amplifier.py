@@ -16,6 +16,118 @@ class AudioFilterError(RuntimeError):
     """Raised when audio filtering/noise reduction fails."""
 
 
+_DEEPFILTER_SITE_CUSTOMIZE = r"""
+import sys
+import types
+import wave
+
+try:
+    import torch
+    import torchaudio
+except ImportError:
+    torch = None
+    torchaudio = None
+
+
+class AudioMetaData:
+    def __init__(self, sample_rate, num_frames, num_channels, bits_per_sample=16):
+        self.sample_rate = sample_rate
+        self.num_frames = num_frames
+        self.num_channels = num_channels
+        self.bits_per_sample = bits_per_sample
+        self.encoding = "PCM_S"
+
+
+def _wave_info(file, **kwargs):
+    with wave.open(str(file), "rb") as wav:
+        return AudioMetaData(
+            sample_rate=wav.getframerate(),
+            num_frames=wav.getnframes(),
+            num_channels=wav.getnchannels(),
+            bits_per_sample=wav.getsampwidth() * 8,
+        )
+
+
+def _wave_load(file, frame_offset=0, num_frames=-1, channels_first=True, **kwargs):
+    if torch is None:
+        raise ImportError("torch is required to load WAV audio")
+    with wave.open(str(file), "rb") as wav:
+        channels = wav.getnchannels()
+        sample_rate = wav.getframerate()
+        sample_width = wav.getsampwidth()
+        if sample_width != 2:
+            raise RuntimeError("Only 16-bit PCM WAV files are supported by this fallback")
+        if frame_offset:
+            wav.setpos(frame_offset)
+        frames_to_read = wav.getnframes() - frame_offset if num_frames < 0 else num_frames
+        raw = wav.readframes(frames_to_read)
+    audio = torch.frombuffer(bytearray(raw), dtype=torch.int16).to(torch.float32)
+    audio = audio.reshape(-1, channels) / 32768.0
+    if channels_first:
+        audio = audio.t().contiguous()
+    return audio, sample_rate
+
+
+def _wave_save(file, src, sample_rate, channels_first=True, **kwargs):
+    if torch is None:
+        raise ImportError("torch is required to save WAV audio")
+    audio = torch.as_tensor(src).detach().cpu()
+    if channels_first:
+        audio = audio.t()
+    if audio.ndim == 1:
+        audio = audio.reshape(-1, 1)
+    if audio.dtype.is_floating_point:
+        pcm_audio = (audio.clamp(-1.0, 1.0) * 32767.0).to(torch.int16)
+    else:
+        pcm_audio = audio.to(torch.int16)
+    pcm = pcm_audio.contiguous().numpy().tobytes()
+    with wave.open(str(file), "wb") as wav:
+        wav.setnchannels(audio.shape[1])
+        wav.setsampwidth(2)
+        wav.setframerate(int(sample_rate))
+        wav.writeframes(pcm)
+
+
+if torchaudio is not None:
+    torchaudio.info = _wave_info
+    torchaudio.load = _wave_load
+    torchaudio.save = _wave_save
+
+backend_module = types.ModuleType("torchaudio.backend")
+backend_common_module = types.ModuleType("torchaudio.backend.common")
+backend_common_module.AudioMetaData = AudioMetaData
+backend_module.common = backend_common_module
+sys.modules["torchaudio.backend"] = backend_module
+sys.modules["torchaudio.backend.common"] = backend_common_module
+"""
+
+
+def _select_deepfilter_output(output_dir: Path, source: Path) -> Path:
+    candidates = [
+        path
+        for path in output_dir.iterdir()
+        if path.is_file() and path.suffix.lower() in {".wav", ".flac", ".mp3", ".ogg"}
+    ]
+    exact = output_dir / source.name
+    if exact in candidates:
+        return exact
+
+    stem_matches = [path for path in candidates if path.stem.startswith(source.stem)]
+    if len(stem_matches) == 1:
+        return stem_matches[0]
+    if len(candidates) == 1:
+        return candidates[0]
+    if candidates:
+        names = ", ".join(sorted(path.name for path in candidates))
+        raise AudioFilterError(
+            "deepFilter produced multiple possible output files; could not choose one. "
+            f"Candidates: {names}"
+        )
+    raise AudioFilterError(
+        "deepFilter finished but did not produce a filtered output file."
+    )
+
+
 @contextmanager
 def deepfilter_audio_input(
     *,
@@ -30,56 +142,33 @@ def deepfilter_audio_input(
 
     with tempfile.TemporaryDirectory(prefix="lecture_auto_df_") as tmp_dir:
         tmp_dir_path = Path(tmp_dir)
-        
-        source = tmp_dir_path / f"{original_source.stem}_src.wav"
+        source_dir = tmp_dir_path / "input"
+        output_dir = tmp_dir_path / "output"
+        source_dir.mkdir()
+        output_dir.mkdir()
+
+        source = source_dir / f"{original_source.stem}_src.wav"
         ffmpeg_cmd = [
             ffmpeg_bin, "-y", "-v", "warning",
             "-i", str(original_source),
             "-c:a", "pcm_s16le",
             str(source),
         ]
-        completed = subprocess.run(ffmpeg_cmd, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        if completed.returncode != 0:
-            raise AudioFilterError(f"Failed to convert {original_source.suffix} to WAV for filtering. Detail: {completed.stderr}")
-
-        output_path = tmp_dir_path / source.name
-        
-        py_mock_script = (
-            "import sys, types\n"
-            "try:\n"
-            "    import torch\n"
-            "    import torchaudio\n"
-            "    import soundfile as sf\n"
-            "    class AudioMetaData:\n"
-            "        def __init__(self, sr, frames, channels):\n"
-            "            self.sample_rate = sr\n"
-            "            self.num_frames = frames\n"
-            "            self.num_channels = channels\n"
-            "            self.encoding = 'PCM_S'\n"
-            "            self.bits_per_sample = 16\n"
-            "    def _mock_info(f, **kwargs):\n"
-            "        info = sf.info(f)\n"
-            "        return AudioMetaData(info.samplerate, info.frames, info.channels)\n"
-            "    def _mock_load(f, frame_offset=0, num_frames=-1, **kwargs):\n"
-            "        kw = {'always_2d': True, 'start': frame_offset}\n"
-            "        if num_frames > 0: kw['frames'] = num_frames\n"
-            "        data, sr = sf.read(f, **kw)\n"
-            "        return torch.from_numpy(data.T).float(), sr\n"
-            "    def _mock_save(f, src, sr, channels_first=True, **kwargs):\n"
-            "        if channels_first: src = src.T\n"
-            "        sf.write(f, src.numpy(), sr)\n"
-            "    torchaudio.info = _mock_info\n"
-            "    torchaudio.load = _mock_load\n"
-            "    torchaudio.save = _mock_save\n"
-            "except ImportError:\n"
-            "    pass\n"
-            "sys.modules['torchaudio.backend'] = types.ModuleType('torchaudio.backend')\n"
-            "sys.modules['torchaudio.backend.common'] = types.ModuleType('torchaudio.backend.common')\n"
-            "sys.modules['torchaudio.backend.common'].AudioMetaData = getattr(sys.modules.get(__name__), 'AudioMetaData', type('AudioMetaData', (), {}))\n"
+        completed = subprocess.run(
+            ffmpeg_cmd,
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
         )
-        
+        if completed.returncode != 0:
+            raise AudioFilterError(
+                f"Failed to convert {original_source.suffix} to WAV for filtering. "
+                f"Detail: {completed.stderr}"
+            )
+
         sitecustomize_path = tmp_dir_path / "sitecustomize.py"
-        sitecustomize_path.write_text(py_mock_script)
+        sitecustomize_path.write_text(_DEEPFILTER_SITE_CUSTOMIZE)
 
         env = dict(os.environ)
         env["PYTHONPATH"] = f"{tmp_dir_path}:{env.get('PYTHONPATH', '')}".strip(":")
@@ -88,7 +177,9 @@ def deepfilter_audio_input(
             deepfilter_bin,
             str(source),
             "-o",
-            str(tmp_dir_path),
+            str(output_dir),
+            "--log-level",
+            "none",
         ]
 
         try:
@@ -118,16 +209,7 @@ def deepfilter_audio_input(
                 + (f" Detail: {detail}" if detail else "")
             )
 
-        if not output_path.exists():
-            # Sometimes deepfilternet changes the extension but usually it keeps the same name
-            # Let's search the output directory
-            files = list(tmp_dir_path.glob("*"))
-            if files:
-                output_path = files[0]
-            else:
-                raise AudioFilterError(
-                    "deepFilter finished but did not produce a filtered output file."
-                )
+        output_path = _select_deepfilter_output(output_dir, source)
 
         yield str(output_path)
 
