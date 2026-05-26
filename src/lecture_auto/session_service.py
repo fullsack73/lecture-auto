@@ -123,6 +123,14 @@ class SessionService:
         title: str | None = None,
         course: str | None = None,
     ) -> CommandResult:
+        if self.store.get_by_session_id(session_id) is not None:
+            raise SessionCommandError(
+                code="SESSION_ID_CONFLICT",
+                message=f"Session '{session_id}' already exists.",
+                guidance="Choose a unique session ID.",
+                exit_code=1,
+            )
+
         naming_pending = not (title and course)
         metadata = {
             "session_id": session_id,

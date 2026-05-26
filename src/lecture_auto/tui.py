@@ -233,17 +233,69 @@ def _select_session(service, prompt: str = "Select a session") -> str | None:
         typer.echo("No sessions found. Create a session first.")
         return None
 
-    choices = []
-    for s in sessions:
-        label = f"[{s['date']}] {s['title'] or '(no title)'} ({s['session_id']}) — {s['status']}"
-        choices.append(questionary.Choice(title=label, value=s["session_id"]))
-    choices.append(questionary.Separator())
-    choices.append(questionary.Choice(title="← Back", value="__back__"))
+    while True:
+        courses: dict[str, list[dict]] = {}
+        no_course: list[dict] = []
 
-    choice = questionary.select(prompt, choices=choices, style=STYLE).ask()
-    if choice in (None, "__back__"):
-        return None
-    return choice
+        for s in sessions:
+            c = s.get("course")
+            if c:
+                if c not in courses:
+                    courses[c] = []
+                courses[c].append(s)
+            else:
+                no_course.append(s)
+
+        choices = []
+        for c in sorted(courses.keys()):
+            count = len(courses[c])
+            choices.append(questionary.Choice(title=f"📁 {c} ({count} sessions)", value=f"__course__:{c}"))
+
+        if courses and no_course:
+            choices.append(questionary.Separator())
+
+        for s in no_course:
+            label = f"[{s['date']}] {s['title'] or '(no title)'} ({s['session_id']}) — {s['status']}"
+            choices.append(questionary.Choice(title=label, value=s["session_id"]))
+
+        choices.append(questionary.Separator())
+        choices.append(questionary.Choice(title="← Back", value="__back__"))
+
+        choice = questionary.select(prompt, choices=choices, style=STYLE).ask()
+
+        if choice in (None, "__back__"):
+            return None
+
+        if choice.startswith("__course__:"):
+            selected_course = choice.split(":", 1)[1]
+            course_sessions = courses[selected_course]
+            
+            course_choices = []
+            for s in course_sessions:
+                label = f"[{s['date']}] {s['title'] or '(no title)'} ({s['session_id']}) — {s['status']}"
+                course_choices.append(questionary.Choice(title=label, value=s["session_id"]))
+            
+            course_choices.append(questionary.Separator())
+            course_choices.append(questionary.Choice(title="← Back to folders", value="__back__"))
+            
+            course_choice = questionary.select(f"{prompt} [{selected_course}]", choices=course_choices, style=STYLE).ask()
+            
+            if course_choice == "__back__":
+                continue
+            if course_choice is None:
+                return None
+            return course_choice
+
+        return choice
+
+
+def _active_recording_session_id(service) -> str | None:
+    """Return the currently recording session, if one exists."""
+    result = service.session_history()
+    for session in result.payload.get("sessions", []):
+        if session.get("status") == "recording":
+            return session["session_id"]
+    return None
 
 
 # ── Config helpers (mirrors cli.py logic without typer context) ─────────────
@@ -514,7 +566,16 @@ def _menu_capture(service) -> None:
                 _echo_error("capture start", exc)
 
         elif choice == "stop":
-            session_id = _select_session(service, "Select session to stop")
+            try:
+                session_id = _active_recording_session_id(service)
+            except SessionCommandError as exc:
+                _echo_error("session history", exc)
+                continue
+
+            if session_id:
+                typer.echo(f"Stopping active capture for session '{session_id}'.")
+            else:
+                session_id = _select_session(service, "Select session to stop")
             if session_id is None:
                 continue
             try:
