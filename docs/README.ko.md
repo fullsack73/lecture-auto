@@ -1,27 +1,25 @@
 # Lecture Auto
 
-[Korean documentation](docs/README.ko.md)
+컴퓨터가 수업을 대신 듣게 해주는 CLI/TUI 도구.
 
-A CLI/TUI tool that lets your computer attend class for you.
-
-Lecture Auto records lecture audio, transcribes it, refines the transcript, and generates structured study notes. Instead of taking notes manually in real time, you can hand off the `recording -> transcript -> structured notes` flow to the program.
+녹음한 강의 오디오를 전사하고, 전사문을 다듬고, 구조화된 강의 노트까지 자동으로 만든다. 수업을 사람이 실시간으로 정리하는 대신, 프로그램이 `recording -> transcript -> structured notes` 흐름을 맡는다.
 
 ## What It Does
 
-- Create and manage lecture sessions
-- Record microphone or system audio
-- Generate transcripts with STT
-- Refine transcripts with an LLM
-- Generate structured lecture notes with an LLM
-- Attach PDF/PPT/PPTX course materials to sessions
-- Search and open generated notes, transcripts, and recordings
-- Use either CLI commands or the interactive TUI
+- 강의 세션 생성/관리
+- 마이크 또는 시스템 오디오 녹음
+- STT로 전사문 생성
+- LLM으로 전사문 refinement
+- LLM으로 구조화 노트 생성
+- PDF/PPT/PPTX 수업 자료를 세션에 첨부
+- 생성된 노트, 전사문, 녹음 파일 검색/열기
+- CLI와 대화형 TUI 둘 다 지원
 
-Notes always use the `structured-notes` format. With Ollama, the model does not write Markdown directly; it generates section JSON, and the app renders the final Markdown.
+노트는 항상 `structured-notes` 형식으로 생성된다. Ollama 사용 시에는 모델이 Markdown을 직접 쓰지 않고, 섹션별 JSON을 만든 뒤 앱이 최종 Markdown을 렌더링한다.
 
 ## Quick Start
 
-Detailed installation and provider setup live in [docs/setup.md](docs/setup.md). Korean setup docs are available at [docs/setup.ko.md](docs/setup.ko.md).
+설치와 provider 설정 세부 내용은 [setup.ko.md](setup.ko.md)를 참고한다.
 
 ```bash
 git clone https://github.com/fullsack73/auto_lecture_notes.git
@@ -29,7 +27,7 @@ cd auto_lecture_notes
 pip install -e .
 ```
 
-Basic config:
+기본 설정:
 
 ```bash
 lecture-auto config set \
@@ -42,13 +40,13 @@ lecture-auto config set \
   --gemini-api-key "your-gemini-key"
 ```
 
-Open the TUI:
+TUI 실행:
 
 ```bash
 lecture-auto
 ```
 
-Run one session from the CLI:
+CLI로 한 세션 처리:
 
 ```bash
 lecture-auto session create \
@@ -63,7 +61,7 @@ lecture-auto transcription run week-01
 lecture-auto summarize --id week-01
 ```
 
-Generated files are stored under the active workspace.
+결과물은 workspace 아래에 저장된다.
 
 ```text
 metadata/sessions.json
@@ -76,14 +74,14 @@ notes/[course/]session-id.md
 
 ## Main Workflow
 
-1. Create a session
-2. Record the lecture
-3. Run STT
-4. Refine the transcript
-5. Generate notes
-6. Check the results in the library
+1. 세션 생성
+2. 수업 녹음
+3. STT 실행
+4. 전사문 refine
+5. 노트 생성
+6. library에서 결과 확인
 
-Transcript refinement is currently available from the TUI's Transcription menu. Note generation uses the best available transcript. If an edited transcript exists, it is preferred over the raw transcript.
+전사문 refine는 현재 TUI의 Transcription 메뉴에서 실행한다. 노트 생성은 가장 좋은 전사문을 사용한다. edited transcript가 있으면 raw transcript보다 우선한다.
 
 ## Commands
 
@@ -93,7 +91,7 @@ Transcript refinement is currently available from the TUI's Transcription menu. 
 lecture-auto
 ```
 
-The easiest entry point. Use it to manage sessions, record audio, transcribe, refine transcripts, generate notes, browse the library, and update config.
+가장 편한 진입점. 세션, 녹음, 전사, 전사문 refine, 노트 생성, library, 설정을 메뉴로 조작한다.
 
 ### Config
 
@@ -102,7 +100,7 @@ lecture-auto config set [OPTIONS]
 lecture-auto config show
 ```
 
-Common options:
+자주 쓰는 옵션:
 
 ```bash
 lecture-auto config set --workspace ./lecture_data
@@ -124,7 +122,7 @@ lecture-auto session refine-audio <session_id>
 lecture-auto session refine-noise <session_id>
 ```
 
-`import-material` accepts PDF, PPT, and PPTX files. PPT/PPTX files are converted to PDF and stored with the session.
+`import-material`는 PDF, PPT, PPTX를 받는다. PPT/PPTX는 PDF로 변환해 세션 자료로 저장한다.
 
 ### Capture
 
@@ -133,7 +131,7 @@ lecture-auto capture start <session_id>
 lecture-auto capture stop <session_id>
 ```
 
-Recording uses FFmpeg/AVFoundation on macOS. System audio capture may require a loopback device such as BlackHole, Loopback, or Soundflower.
+macOS FFmpeg/AVFoundation 기반 녹음. 시스템 오디오를 녹음하려면 BlackHole, Loopback, Soundflower 같은 loopback 장치가 필요할 수 있다.
 
 ### Transcription
 
@@ -141,7 +139,7 @@ Recording uses FFmpeg/AVFoundation on macOS. System audio capture may require a 
 lecture-auto transcription run <session_id>
 ```
 
-Transcribes the session recording with the configured STT provider. If refined audio exists, it is used before the original recording.
+설정된 STT provider로 녹음 파일을 전사한다. refined audio가 있으면 refined audio를 우선 사용한다.
 
 ### Summarize
 
@@ -150,7 +148,7 @@ lecture-auto summarize --id <session_id>
 lecture-auto summarize --id <session_id> --preview
 ```
 
-Generates structured lecture notes from the transcript. Template selection is deprecated; notes always use the `structured-notes` format.
+전사문에서 구조화 강의 노트를 만든다. 템플릿 선택은 deprecated이며, 항상 `structured-notes` 형식을 사용한다.
 
 ### Library
 
@@ -162,21 +160,21 @@ lecture-auto library open <session_id> --transcript
 lecture-auto library open <session_id> --recordings
 ```
 
-Use the library to browse sessions and generated artifacts.
+저장된 세션과 생성물 탐색용.
 
 ## Providers
 
 STT:
 
-- `api`: Deepgram or an OpenAI-compatible provider
+- `api`: Deepgram 또는 OpenAI-compatible provider
 - `local`: local Whisper/faster-whisper
 
 LLM:
 
-- `gemini`: default; most stable note quality
-- `ollama`: Ollama server; note generation goes through a JSON harness and is rendered as structured Markdown
+- `gemini`: 기본값. 노트 품질이 가장 안정적
+- `ollama`: Ollama server. 노트 생성은 JSON harness를 거쳐 structured Markdown으로 렌더링
 
-Ollama example:
+Ollama 예시:
 
 ```bash
 LLM_PROVIDER=ollama LLM_MODEL=gemma4:31b-cloud lecture-auto summarize --id week-01
@@ -201,13 +199,13 @@ GEMINI_API_KEY
 
 ## JSON Output
 
-Most commands support `--json`.
+대부분의 명령은 `--json`을 지원한다.
 
 ```bash
 lecture-auto session detail week-01 --json
 ```
 
-Response shape:
+응답 형식:
 
 ```json
 {"command":"session detail","payload":{},"message":"Loaded details for session 'week-01'."}
@@ -215,7 +213,6 @@ Response shape:
 
 ## Notes
 
-- Running `lecture-auto` with no subcommand opens the TUI.
-- CLI commands are good for repeatable workflows and scripting.
-- The TUI is usually easier for session-by-session work.
-- Detailed setup, provider config, and troubleshooting live in [docs/setup.md](docs/setup.md).
+- `lecture-auto`만 실행하면 TUI가 열린다.
+- CLI는 반복 작업/스크립팅에 좋고, TUI는 세션별 작업에 편하다.
+- 상세 설치, provider별 설정, 문제 해결은 [setup.ko.md](setup.ko.md)에 둔다.
