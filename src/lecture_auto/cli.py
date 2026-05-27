@@ -393,7 +393,11 @@ def transcription_run(
 @app.command("summarize")
 def summarize(
     session_id: str | None = typer.Option(None, "--id", help="Target session id"),
-    template: str | None = typer.Option(None, "--template", help="Template name"),
+    template: str | None = typer.Option(
+        None,
+        "--template",
+        help="Deprecated; structured-notes is always used",
+    ),
     preview: bool = typer.Option(False, "--preview", help="Preview notes without saving"),
     as_json: bool = typer.Option(False, "--json", help="Render output as JSON"),
 ) -> None:

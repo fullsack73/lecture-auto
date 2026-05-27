@@ -38,17 +38,21 @@ def _service_with_session(tmp_path: Path, session: dict[str, object]) -> tuple[S
     return SessionService(store=store, llm_adapter=llm_adapter), llm_adapter
 
 
-def test_summarize_template_not_found_returns_command_error(tmp_path: Path) -> None:
+def test_summarize_ignores_requested_template_and_uses_structured_notes(tmp_path: Path) -> None:
     session = _base_session()
-    service, _ = _service_with_session(tmp_path, session)
+    service, llm_adapter = _service_with_session(tmp_path, session)
     transcript_path = tmp_path / "transcripts" / "cs301" / "session-401-raw.md"
     transcript_path.parent.mkdir(parents=True, exist_ok=True)
     transcript_path.write_text("transcript", encoding="utf-8")
 
-    with pytest.raises(SessionCommandError) as exc:
-        service.summarize_session(session_reference="session-401", template_name="missing-template")
+    result = service.summarize_session(
+        session_reference="session-401",
+        template_name="missing-template",
+        preview=True,
+    )
 
-    assert exc.value.code == "TEMPLATE_NOT_FOUND"
+    assert result.payload["template"] == "structured-notes"
+    assert "## Topic Overview" in llm_adapter.generate_notes.call_args.kwargs["template"]
 
 
 def test_summarize_llm_auth_error_is_propagated_with_mapped_code(tmp_path: Path) -> None:
@@ -110,9 +114,8 @@ def test_summarize_overwrites_existing_note_file(tmp_path: Path) -> None:
     assert note_path.read_text(encoding="utf-8") == "updated content"
 
 
-def test_summarize_uses_custom_template_from_user_directory(
+def test_summarize_does_not_use_custom_template_from_user_directory(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     session = _base_session("session-404")
     service, llm_adapter = _service_with_session(tmp_path, session)
@@ -127,7 +130,8 @@ def test_summarize_uses_custom_template_from_user_directory(
 
     service.summarize_session(session_reference="session-404", template_name="custom-format", preview=True)
 
-    assert llm_adapter.generate_notes.call_args.kwargs["template"] == "# custom-template"
+    assert llm_adapter.generate_notes.call_args.kwargs["template"] != "# custom-template"
+    assert "## Topic Overview" in llm_adapter.generate_notes.call_args.kwargs["template"]
 
 
 def test_summarize_prefers_edited_transcript_over_raw(tmp_path: Path) -> None:

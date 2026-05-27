@@ -64,7 +64,7 @@ JOB_ALLOWED_TRANSITIONS = {
 }
 MAX_IMPORT_RETRIES = 3
 MAX_STT_API_RETRIES = 2
-DEFAULT_NOTE_TEMPLATE_NAME = "bullet-summary"
+DEFAULT_NOTE_TEMPLATE_NAME = "structured-notes"
 
 # Sentinel used by session_update_metadata to distinguish "not provided" from explicit None
 _UNSET = object()
@@ -1628,40 +1628,20 @@ class SessionService:
         return raw_path, edited_path
 
     def list_note_templates(self) -> list[str]:
-        """List available summary note templates."""
-        preset_dir = Path(__file__).resolve().parent / "templates"
-        user_dir = self.store.metadata_file.parent.parent / "templates"
-        
-        templates = set()
-        for directory in (preset_dir, user_dir):
-            if directory.exists() and directory.is_dir():
-                for p in directory.glob("*.md"):
-                    templates.add(p.stem)
-                    
-        return sorted(list(templates))
+        """List the fixed summary note template."""
+        return [DEFAULT_NOTE_TEMPLATE_NAME]
 
     def _resolve_note_template(self, template_name: str | None) -> tuple[str, str]:
-        resolved_name = (template_name or DEFAULT_NOTE_TEMPLATE_NAME).strip()
-        if not resolved_name:
-            resolved_name = DEFAULT_NOTE_TEMPLATE_NAME
-        if resolved_name.lower().endswith(".md"):
-            resolved_name = resolved_name[:-3]
-
+        _ = template_name
         preset_dir = Path(__file__).resolve().parent / "templates"
-        user_dir = self.store.metadata_file.parent.parent / "templates"
-        candidates = [
-            preset_dir / f"{resolved_name}.md",
-            user_dir / f"{resolved_name}.md",
-        ]
-
-        for path in candidates:
-            if path.exists() and path.is_file():
-                return resolved_name, path.read_text(encoding="utf-8")
+        template_path = preset_dir / f"{DEFAULT_NOTE_TEMPLATE_NAME}.md"
+        if template_path.exists() and template_path.is_file():
+            return DEFAULT_NOTE_TEMPLATE_NAME, template_path.read_text(encoding="utf-8")
 
         raise SessionCommandError(
             code="TEMPLATE_NOT_FOUND",
-            message=f"Template '{resolved_name}' was not found.",
-            guidance=f"Use a preset template or create {user_dir}/<name>.md.",
+            message=f"Template '{DEFAULT_NOTE_TEMPLATE_NAME}' was not found.",
+            guidance=f"Restore the preset template at {template_path}.",
             exit_code=1,
         )
 

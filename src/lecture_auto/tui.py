@@ -632,26 +632,6 @@ def _menu_summarize(service) -> None:
     if session_id is None:
         return
 
-    try:
-        templates = service.list_note_templates()
-    except SessionCommandError as exc:
-        _echo_error("summarize", exc)
-        return
-
-    choices = [questionary.Choice(title=t, value=t) for t in templates]
-    if choices:
-        choices.append(questionary.Separator())
-    choices.append(questionary.Choice(title="✎  Enter manually...", value="__manual__"))
-
-    template_choice = _select("Template", choices)
-    if template_choice is None:
-        return
-
-    if template_choice == "__manual__":
-        template = _ask("Template name (leave blank for default)")
-    else:
-        template = template_choice
-
     preview_choice = _select(
         "Save or preview?",
         [
@@ -666,7 +646,7 @@ def _menu_summarize(service) -> None:
     try:
         result = service.summarize_session(
             session_reference=session_id,
-            template_name=template or None,
+            template_name=None,
             preview=preview_choice,
         )
         _echo_result(result)

@@ -69,6 +69,19 @@ def test_status_persistence_and_detail_lookup_after_start(tmp_path: Path) -> Non
     assert detail_result.payload["audio_file_path"] == "recordings/session-202.wav"
 
 
+def test_rerecording_completed_session_persists_recording_status(tmp_path: Path) -> None:
+    service = _service(tmp_path)
+    service.session_create("session-202-rerecord", "2026-03-07")
+    service.capture_start("session-202-rerecord")
+    service.capture_stop("session-202-rerecord", success=True)
+
+    start_result = service.capture_start("session-202-rerecord")
+    detail_result = service.session_detail("session-202-rerecord")
+
+    assert start_result.payload["status"] == "recording"
+    assert detail_result.payload["status"] == "recording"
+
+
 def test_create_without_title_or_course_marks_naming_pending(tmp_path: Path) -> None:
     service = _service(tmp_path)
 
@@ -263,4 +276,3 @@ def test_update_session_id_file_rename_failure_raises_error(tmp_path: Path, monk
     assert exc.value.code == "SESSION_FILE_RENAME_ERROR"
     # Original session metadata should be untouched
     assert service.store.get_by_session_id("session-306") is not None
-

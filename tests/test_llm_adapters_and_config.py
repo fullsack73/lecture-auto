@@ -87,6 +87,31 @@ def test_refine_transcript_uses_adaptive_chunk_size_for_large_input() -> None:
     assert max(chunk_lengths) > 4000
 
 
+def test_refine_transcript_uses_lecture_transcript_editor_prompt() -> None:
+    sys.modules['google.genai'].reset_mock()
+
+    mock_client_instance = MagicMock()
+    mock_response = MagicMock()
+    mock_response.text = "Clean transcript."
+    mock_client_instance.models.generate_content.return_value = mock_response
+    sys.modules['google.genai'].Client.return_value = mock_client_instance
+
+    config = LLMConfig(api_key="valid-key", language="Korean")
+    adapter = GeminiLLMAdapter(config)
+
+    adapter.refine_transcript("raw transcript", context_topic="Algorithms")
+
+    call_kwargs = mock_client_instance.models.generate_content.call_args.kwargs
+    system_instruction = call_kwargs["config"]["system_instruction"]
+    contents = call_kwargs["contents"]
+
+    assert "precise lecture transcript editor" in system_instruction
+    assert "not a summary" in system_instruction
+    assert "Algorithms" in system_instruction
+    assert "Korean" in system_instruction
+    assert "<<<\nraw transcript\n>>>" in contents
+
+
 def test_model_name_normalization_maps_gemini_3_0_alias() -> None:
     assert (
         GeminiLLMAdapter._normalize_model_name("gemini-3.0-flash-preview")

@@ -82,7 +82,7 @@ lecture-auto session create \
 lecture-auto capture start week-01
 lecture-auto capture stop week-01
 lecture-auto transcription run week-01
-lecture-auto summarize --id week-01 --template structured-notes
+lecture-auto summarize --id week-01
 ```
 
 ## Global Option
@@ -203,23 +203,14 @@ available; local Whisper output is written as plain text.
 Generate notes from the best available transcript.
 
 ```bash
-lecture-auto summarize --id <session_id> [--template <name>] [--preview] [--json]
+lecture-auto summarize --id <session_id> [--preview] [--json]
 ```
 
 The summary source prefers an edited transcript when it exists and is newer than
 the raw transcript. Imported material is passed to the LLM when available.
 
-Built-in templates:
-
-- `bullet-summary`
-- `structured-notes`
-- `qa-review`
-
-Custom templates can be placed in:
-
-```text
-<workspace>/templates/<name>.md
-```
+Notes always use the built-in `structured-notes` format from
+`src/lecture_auto/templates/structured-notes.md`.
 
 ### `library`
 

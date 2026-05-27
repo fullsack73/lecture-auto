@@ -234,7 +234,7 @@ def _render_summarize(payload: dict[str, Any], message: str) -> str:
         f"- Source Transcript: {payload.get('source_transcript')}\n"
         f"{material_line}"
         f"- Note Path: {payload.get('note_file_path')}\n"
-        "- Next: Re-run summarize with --template to regenerate"
+        "- Next: Re-run summarize to regenerate structured notes"
     )
 
 

@@ -57,9 +57,10 @@ def test_summarize_defaults_to_most_recent_session(tmp_path: Path) -> None:
 
     assert result.command == "summarize"
     assert result.payload["session_id"] == "session-new"
-    assert result.payload["template"] == "bullet-summary"
+    assert result.payload["template"] == "structured-notes"
     llm_adapter.generate_notes.assert_called_once()
     assert llm_adapter.generate_notes.call_args.kwargs["transcript"] == "new raw transcript"
+    assert "## Topic Overview" in llm_adapter.generate_notes.call_args.kwargs["template"]
 
 
 def test_summarize_id_targets_specific_session(tmp_path: Path) -> None:
