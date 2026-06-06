@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any, Protocol
 
 from lecture_auto.llm_config import LLMConfig, normalize_gemini_model_name
@@ -126,6 +127,7 @@ def _build_ollama_structured_notes_system_instruction(
         f"{topic_prompt}"
         f"{lang_prompt}"
         "Return valid JSON only. No markdown. No code fence. No explanation. "
+        "If a string contains a literal backslash, escape it as a double backslash. "
         "Use transcript evidence only; do not invent facts. "
         "Schema exactly: "
         '{"topic_overview":["..."],'
@@ -187,18 +189,32 @@ def _extract_json_object(text: str) -> dict[str, Any]:
     if not stripped:
         raise ValueError("empty model response")
 
-    try:
-        parsed = json.loads(stripped)
-    except json.JSONDecodeError:
+    parsed = _load_json_object_candidate(stripped)
+    if parsed is None:
         start = stripped.find("{")
         end = stripped.rfind("}")
         if start == -1 or end == -1 or end <= start:
-            raise
-        parsed = json.loads(stripped[start : end + 1])
+            json.loads(stripped)
+        parsed = _load_json_object_candidate(stripped[start : end + 1])
+        if parsed is None:
+            json.loads(stripped[start : end + 1])
 
     if not isinstance(parsed, dict):
         raise ValueError("model response JSON must be an object")
     return parsed
+
+
+def _load_json_object_candidate(candidate: str) -> Any:
+    for source in (candidate, _escape_invalid_json_backslashes(candidate)):
+        try:
+            return json.loads(source)
+        except json.JSONDecodeError:
+            continue
+    return None
+
+
+def _escape_invalid_json_backslashes(candidate: str) -> str:
+    return re.sub(r'\\(?!["\\/bfnrtu])', r"\\\\", candidate)
 
 
 def _clean_note_item(value: Any) -> str | None:

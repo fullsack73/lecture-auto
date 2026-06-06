@@ -19,6 +19,10 @@ def _ollama_response(payload: dict) -> dict:
     return {"message": {"content": json.dumps(payload, ensure_ascii=False)}}
 
 
+def _ollama_raw_response(content: str) -> dict:
+    return {"message": {"content": content}}
+
+
 def test_ollama_notes_harness_repairs_json_and_renders_structured_markdown() -> None:
     adapter = _adapter()
     adapter.ollama.chat.side_effect = [
@@ -109,3 +113,38 @@ def test_ollama_notes_harness_uses_valid_json_without_repair() -> None:
     assert "### 정렬 알고리즘 비교" in notes
     assert "- 버블 정렬" in notes
     assert "중간고사에 시간 복잡도 비교" in notes
+
+
+def test_ollama_notes_harness_recovers_invalid_backslash_escapes() -> None:
+    adapter = _adapter()
+    adapter.ollama.chat.side_effect = [
+        _ollama_response({"topic_overview": ["미분 기호와 최적화 개요"]}),
+        _ollama_raw_response(r'{"core_concepts":["\alpha는 학습률을 나타낸다."]}'),
+        _ollama_response(
+            {
+                "detailed_explanations": [
+                    {
+                        "title": "학습률과 업데이트",
+                        "bullets": [r"가중치 업데이트는 \alpha 값에 영향을 받는다."],
+                    }
+                ]
+            }
+        ),
+        _ollama_response({"examples_mentioned": ["Not mentioned."]}),
+        _ollama_response(
+            {
+                "questions_to_review": [
+                    "학습률은 최적화 과정에서 어떤 역할을 하는가?",
+                    "학습률이 너무 크면 어떤 문제가 생기는가?",
+                    "학습률이 너무 작으면 학습 과정은 어떻게 달라지는가?",
+                    "업데이트 식에서 학습률을 이해하면 강의 흐름을 어떻게 재구성할 수 있는가?",
+                ]
+            }
+        ),
+        _ollama_response({"exam_related_mentions": ["Not mentioned."]}),
+    ]
+
+    notes = adapter.generate_notes("학습률 alpha 강의", "# ignored template")
+
+    assert r"\alpha는 학습률을 나타낸다." in notes
+    assert r"가중치 업데이트는 \alpha 값에 영향을 받는다." in notes
