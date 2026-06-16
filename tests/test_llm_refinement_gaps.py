@@ -11,13 +11,6 @@ from lecture_auto.session_metadata_store import SessionMetadataStore
 from lecture_auto.session_service import SessionService, SessionCommandError
 from lecture_auto.llm_config import LLMConfig
 
-import sys
-mock_google = MagicMock()
-mock_genai = MagicMock()
-mock_google.genai = mock_genai
-sys.modules['google'] = mock_google
-sys.modules['google.genai'] = mock_genai
-
 from lecture_auto.llm_adapter import GeminiLLMAdapter
 
 
@@ -30,7 +23,6 @@ def store(tmp_path: Path) -> SessionMetadataStore:
 
 
 def test_end_to_end_refinement_chunking(store: SessionMetadataStore) -> None:
-    mock_genai.reset_mock()
     # Set up session without edited transcript initially
     session = {
         "session_id": "long-session-1",
@@ -58,10 +50,10 @@ def test_end_to_end_refinement_chunking(store: SessionMetadataStore) -> None:
     mock_response = MagicMock()
     mock_response.text = "Refined Mock Output Chunk"
     mock_client_instance.models.generate_content.return_value = mock_response
-    mock_genai.Client.return_value = mock_client_instance
-    
+
     config = LLMConfig(api_key="valid", chunk_size=4000)
-    adapter = GeminiLLMAdapter(config)
+    with patch("google.genai.Client", return_value=mock_client_instance):
+        adapter = GeminiLLMAdapter(config)
     service = SessionService(store=store, llm_adapter=adapter)
     
     result = service.transcript_refine("long-session-1")

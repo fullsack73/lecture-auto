@@ -37,7 +37,7 @@ lecture-auto config set \
   --stt-mode api \
   --stt-api-provider deepgram \
   --stt-api-key "your-stt-key" \
-  --gemini-api-key "your-gemini-key"
+  --gemini-api-key "your-google-api-key"
 ```
 
 TUI 실행:
@@ -106,7 +106,7 @@ lecture-auto config show
 lecture-auto config set --workspace ./lecture_data
 lecture-auto config set --stt-language korean --llm-language korean
 lecture-auto config set --stt-mode api --stt-api-provider deepgram --stt-api-key "..."
-lecture-auto config set --gemini-api-key "..." --llm-model gemini-3.1-flash-lite
+lecture-auto config set --gemini-api-key "..." --llm-model gemma-4-26b-a4b-it
 ```
 
 ### Session
@@ -171,8 +171,14 @@ STT:
 
 LLM:
 
-- `gemini`: 기본값. 노트 품질이 가장 안정적
+- `gemini`: Google API. hosted Gemini와 Gemma 4 model 지원
 - `ollama`: Ollama server. 노트 생성은 JSON harness를 거쳐 structured Markdown으로 렌더링
+
+Google API 예시:
+
+```bash
+LLM_PROVIDER=gemini LLM_MODEL=gemma-4-26b-a4b-it lecture-auto summarize --id week-01
+```
 
 Ollama 예시:
 

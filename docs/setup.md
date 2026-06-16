@@ -14,7 +14,7 @@ Installation and provider setup for Lecture Auto.
   - Loopback
   - Soundflower
 - An STT API key when using cloud STT
-- A Gemini API key when using Gemini
+- A Google API key from AI Studio when using hosted Gemini or Gemma 4 models
 - An Ollama server and model when using Ollama
 
 ## Install
@@ -93,14 +93,14 @@ lecture-auto config set \
 
 ## LLM Setup
 
-### Gemini
+### Google API
 
-Gemini is the default LLM provider.
+Google API is the default LLM provider. It uses the `gemini` provider value for compatibility and supports hosted Gemini and Gemma 4 model IDs.
 
 ```bash
 lecture-auto config set \
-  --gemini-api-key "your-gemini-key" \
-  --llm-model gemini-3.1-flash-lite \
+  --gemini-api-key "your-google-api-key" \
+  --llm-model gemma-4-26b-a4b-it \
   --llm-thinking-level medium \
   --llm-language korean
 ```
@@ -111,6 +111,8 @@ Supported model presets:
 gemini-3.1-flash-lite
 gemini-3-flash-preview
 gemini-3.1-pro-preview
+gemma-4-26b-a4b-it
+gemma-4-31b-it
 ```
 
 ### Ollama
@@ -192,12 +194,12 @@ GEMINI_API_KEY
 
 ### `No LLM adapter configured`
 
-Gemini API key is missing, or Ollama provider/model config is wrong.
+Google API key is missing, or Ollama provider/model config is wrong.
 
-Gemini:
+Google API:
 
 ```bash
-lecture-auto config set --gemini-api-key "your-gemini-key"
+lecture-auto config set --gemini-api-key "your-google-api-key"
 ```
 
 Ollama:

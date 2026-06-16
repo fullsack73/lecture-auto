@@ -7,7 +7,7 @@ from unittest.mock import patch
 from typer.testing import CliRunner
 
 from lecture_auto.cli import _build_service, app
-from lecture_auto.tui import _menu_config
+from lecture_auto.tui import _menu_config, _select_llm_model, _select_llm_provider
 
 
 runner = CliRunner()
@@ -61,6 +61,19 @@ def test_cli_config_set_normalizes_deprecated_gemini_flash_lite_model(tmp_path: 
     assert result.exit_code == 0
     config_data = json.loads(_config_path(tmp_path).read_text(encoding="utf-8"))
     assert config_data["llm_model_name"] == "gemini-3.1-flash-lite"
+
+
+def test_cli_config_set_accepts_google_api_gemma4_model(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    result = runner.invoke(
+        app,
+        ["config", "set", "--llm-model", "gemma-4-26b-a4b-it"],
+    )
+
+    assert result.exit_code == 0
+    config_data = json.loads(_config_path(tmp_path).read_text(encoding="utf-8"))
+    assert config_data["llm_model_name"] == "gemma-4-26b-a4b-it"
 
 
 def test_build_service_loads_stt_mode_and_local_model_from_config(tmp_path: Path, monkeypatch) -> None:
@@ -179,6 +192,32 @@ def test_build_service_loads_local_llm_provider_alias_from_config(tmp_path: Path
     assert used_config.model_name == "gemma4:31b-cloud"
 
 
+def test_build_service_loads_google_api_llm_provider_alias_from_config(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("LLM_PROVIDER", raising=False)
+
+    config_path = _config_path(tmp_path)
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(
+        json.dumps(
+            {
+                "llm_provider": "google api",
+                "gemini_api_key": "fake-key",
+                "llm_model_name": "gemma-4-31b-it",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with patch("lecture_auto.cli.GeminiLLMAdapter") as adapter_cls:
+        service = _build_service()
+
+    assert service.llm_adapter is adapter_cls.return_value
+    used_config = adapter_cls.call_args.args[0]
+    assert used_config.provider == "gemini"
+    assert used_config.model_name == "gemma-4-31b-it"
+
+
 def test_cli_config_set_persists_dynaudnorm(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
 
@@ -295,3 +334,37 @@ def test_tui_menu_config_saves_llm_provider(monkeypatch) -> None:
 
     assert changed is True
     assert saved["llm_provider"] == "local"
+
+
+def test_tui_llm_provider_uses_google_api_label() -> None:
+    captured_choices = []
+
+    def _capture_select(_prompt: str, choices: list) -> str:
+        captured_choices.extend(choices)
+        return "gemini"
+
+    with patch("lecture_auto.tui._select", side_effect=_capture_select):
+        result = _select_llm_provider()
+
+    assert result == "gemini"
+    assert any(getattr(choice, "title", "") == "Google API" for choice in captured_choices)
+
+
+def test_tui_llm_model_includes_gemma4_google_api_options() -> None:
+    captured_choices = []
+
+    def _capture_select(_prompt: str, choices: list) -> str:
+        captured_choices.extend(choices)
+        return "gemma-4-31b-it"
+
+    with patch("lecture_auto.tui._select", side_effect=_capture_select):
+        result = _select_llm_model(provider="gemini", current="gemma-4-31b-it")
+
+    titles = [getattr(choice, "title", "") for choice in captured_choices]
+    values = [getattr(choice, "value", "") for choice in captured_choices]
+
+    assert result == "gemma-4-31b-it"
+    assert "Gemma 4 26B (Google API)" in titles
+    assert "Gemma 4 31B (Google API)" in titles
+    assert "gemma-4-26b-a4b-it" in values
+    assert "gemma-4-31b-it" in values

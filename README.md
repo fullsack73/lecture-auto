@@ -39,7 +39,7 @@ lecture-auto config set \
   --stt-mode api \
   --stt-api-provider deepgram \
   --stt-api-key "your-stt-key" \
-  --gemini-api-key "your-gemini-key"
+  --gemini-api-key "your-google-api-key"
 ```
 
 Open the TUI:
@@ -108,7 +108,7 @@ Common options:
 lecture-auto config set --workspace ./lecture_data
 lecture-auto config set --stt-language korean --llm-language korean
 lecture-auto config set --stt-mode api --stt-api-provider deepgram --stt-api-key "..."
-lecture-auto config set --gemini-api-key "..." --llm-model gemini-3.1-flash-lite
+lecture-auto config set --gemini-api-key "..." --llm-model gemma-4-26b-a4b-it
 ```
 
 ### Session
@@ -173,8 +173,14 @@ STT:
 
 LLM:
 
-- `gemini`: default; most stable note quality
+- `gemini`: Google API; supports hosted Gemini and Gemma 4 models
 - `ollama`: Ollama server; note generation goes through a JSON harness and is rendered as structured Markdown
+
+Google API example:
+
+```bash
+LLM_PROVIDER=gemini LLM_MODEL=gemma-4-26b-a4b-it lecture-auto summarize --id week-01
+```
 
 Ollama example:
 

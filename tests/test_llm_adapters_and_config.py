@@ -2,26 +2,19 @@
 from __future__ import annotations
 
 import pytest
-import sys
 from unittest.mock import MagicMock, patch
 
 from lecture_auto.llm_config import LLMConfig
 
-# Mock modules to avoid ImportError when llm_adapter is imported
-mock_google = MagicMock()
-mock_genai = MagicMock()
-mock_google.genai = mock_genai
-sys.modules['google'] = mock_google
-sys.modules['google.genai'] = mock_genai
-
 from lecture_auto.llm_adapter import (
     GeminiLLMAdapter,
     LLMConfigError,
+    _apply_thinking_config,
 )
 
 def test_llm_config_validation_fails_without_api_key() -> None:
     config = LLMConfig(api_key=None)
-    with pytest.raises(ValueError, match="Gemini API key is required"):
+    with pytest.raises(ValueError, match="Google API key is required"):
         config.validate()
 
 
@@ -42,37 +35,36 @@ def test_llm_config_validation_rejects_too_small_chunk_size() -> None:
 
 
 def test_gemini_adapter_initializes_with_valid_config() -> None:
-    sys.modules['google.genai'].reset_mock()
     config = LLMConfig(api_key="valid-key")
-    adapter = GeminiLLMAdapter(config)
+    with patch("google.genai.Client") as client_cls:
+        adapter = GeminiLLMAdapter(config)
 
-    sys.modules['google.genai'].Client.assert_called_once_with(api_key="valid-key")
+    client_cls.assert_called_once_with(api_key="valid-key")
 
 
 def test_gemini_adapter_missing_api_key_raises_error() -> None:
     config = LLMConfig(api_key="")
-    with pytest.raises(LLMConfigError, match="Gemini API key is required"):
+    with pytest.raises(LLMConfigError, match="Google API key is required"):
         GeminiLLMAdapter(config)
 
 
 def test_gemini_adapter_refine_transcript_empty_text() -> None:
     config = LLMConfig(api_key="valid-key")
-    adapter = GeminiLLMAdapter(config)
+    with patch("google.genai.Client"):
+        adapter = GeminiLLMAdapter(config)
     result = adapter.refine_transcript("   ")
     assert result == "   "
 
 
 def test_refine_transcript_uses_adaptive_chunk_size_for_large_input() -> None:
-    sys.modules['google.genai'].reset_mock()
-
     mock_client_instance = MagicMock()
     mock_response = MagicMock()
     mock_response.text = "Refined"
     mock_client_instance.models.generate_content.return_value = mock_response
-    sys.modules['google.genai'].Client.return_value = mock_client_instance
 
     config = LLMConfig(api_key="valid-key", chunk_size=4000)
-    adapter = GeminiLLMAdapter(config)
+    with patch("google.genai.Client", return_value=mock_client_instance):
+        adapter = GeminiLLMAdapter(config)
 
     raw_text = "word " * 7200  # ~36k chars
     adapter.refine_transcript(raw_text)
@@ -88,16 +80,14 @@ def test_refine_transcript_uses_adaptive_chunk_size_for_large_input() -> None:
 
 
 def test_refine_transcript_uses_lecture_transcript_editor_prompt() -> None:
-    sys.modules['google.genai'].reset_mock()
-
     mock_client_instance = MagicMock()
     mock_response = MagicMock()
     mock_response.text = "Clean transcript."
     mock_client_instance.models.generate_content.return_value = mock_response
-    sys.modules['google.genai'].Client.return_value = mock_client_instance
 
     config = LLMConfig(api_key="valid-key", language="Korean")
-    adapter = GeminiLLMAdapter(config)
+    with patch("google.genai.Client", return_value=mock_client_instance):
+        adapter = GeminiLLMAdapter(config)
 
     adapter.refine_transcript("raw transcript", context_topic="Algorithms")
 
@@ -131,3 +121,29 @@ def test_model_name_normalization_maps_deprecated_flash_lite_preview() -> None:
         GeminiLLMAdapter._normalize_model_name("gemini-3.1-flash-lite-preview")
         == "gemini-3.1-flash-lite"
     )
+
+
+def test_gemma4_omits_non_high_thinking_config() -> None:
+    class FakeTypes:
+        @staticmethod
+        def ThinkingConfig(thinking_level: str) -> dict:
+            return {"thinking_level": thinking_level}
+
+    config: dict = {"system_instruction": "test"}
+
+    _apply_thinking_config(config, FakeTypes, "gemma-4-26b-a4b-it", "medium")
+
+    assert "thinking_config" not in config
+
+
+def test_gemma4_high_thinking_config_is_enabled() -> None:
+    class FakeTypes:
+        @staticmethod
+        def ThinkingConfig(thinking_level: str) -> dict:
+            return {"thinking_level": thinking_level}
+
+    config: dict = {"system_instruction": "test"}
+
+    _apply_thinking_config(config, FakeTypes, "gemma-4-26b-a4b-it", "high")
+
+    assert config["thinking_config"] == {"thinking_level": "high"}

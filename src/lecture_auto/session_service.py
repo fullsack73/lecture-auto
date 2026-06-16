@@ -1279,7 +1279,7 @@ class SessionService:
             raise SessionCommandError(
                 code="LLM_NOT_CONFIGURED",
                 message="No LLM adapter configured for refinement.",
-                guidance="Configure an LLM provider (e.g., Gemini) to use the refine command.",
+                guidance="Configure an LLM provider (e.g., Google API) to use the refine command.",
                 exit_code=1,
             )
 
@@ -1372,7 +1372,7 @@ class SessionService:
             raise SessionCommandError(
                 code="LLM_NOT_CONFIGURED",
                 message="No LLM adapter configured for summarize.",
-                guidance="Configure an LLM provider (e.g., Gemini) to use summarize.",
+                guidance="Configure an LLM provider (e.g., Google API) to use summarize.",
                 exit_code=1,
             )
 

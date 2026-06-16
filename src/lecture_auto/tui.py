@@ -140,27 +140,38 @@ def _select_stt_local_model(current: str = "") -> str | None:
 
 def _select_llm_model(provider: str = "", current: str = "") -> str | None:
     """Select an LLM model for persisted config.
-    If provider is 'local', allow manual input. Otherwise use Gemini presets.
+    If provider is 'local', allow manual input. Otherwise use Google API presets.
     """
-    if provider == "local":
+    provider = (provider or "").strip().lower()
+    if provider in {"local", "ollama"}:
         return _ask("LLM model name (e.g. llama3, mistral)", default=current)
 
     normalized_current = normalize_gemini_model_name(current)
     choices = [
         questionary.Choice(
-            title="Flash-Lite (recommended stable)",
+            title="Gemini Flash-Lite (recommended stable)",
             value=DEFAULT_GEMINI_MODEL,
             checked=normalized_current == DEFAULT_GEMINI_MODEL,
         ),
         questionary.Choice(
-            title="Flash (more capable, preview)",
+            title="Gemini Flash (more capable, preview)",
             value="gemini-3-flash-preview",
             checked=normalized_current == "gemini-3-flash-preview",
         ),
         questionary.Choice(
-            title="Pro (most capable, preview)",
+            title="Gemini Pro (most capable, preview)",
             value="gemini-3.1-pro-preview",
             checked=normalized_current == "gemini-3.1-pro-preview",
+        ),
+        questionary.Choice(
+            title="Gemma 4 26B (Google API)",
+            value="gemma-4-26b-a4b-it",
+            checked=normalized_current == "gemma-4-26b-a4b-it",
+        ),
+        questionary.Choice(
+            title="Gemma 4 31B (Google API)",
+            value="gemma-4-31b-it",
+            checked=normalized_current == "gemma-4-31b-it",
         ),
         questionary.Separator(),
         questionary.Choice(title="Clear value", value="__clear__"),
@@ -174,7 +185,7 @@ def _select_llm_provider(current: str = "") -> str | None:
     normalized_current = (current or "").strip().lower()
     choices = [
         questionary.Choice(
-            title="Gemini (cloud API)",
+            title="Google API",
             value="gemini",
             checked=normalized_current == "gemini" or normalized_current == "",
         ),
@@ -813,12 +824,12 @@ def _menu_config() -> bool:
                 ("stt_local_model", "Local Whisper model (e.g. base, large-v3)"),
                 "── LLM (Large Language Model) ──",
                 ("llm_language", "LLM language (e.g. korean)"),
-                ("llm_provider", "LLM provider (gemini or local)"),
+                ("llm_provider", "LLM provider (Google API or local)"),
                 ("llm_model_name", "LLM model"),
                 ("llm_thinking_level", "LLM thinking level"),
                 "── API Keys ──",
                 ("stt_api_key", "STT API key"),
-                ("gemini_api_key", "Gemini API key"),
+                ("gemini_api_key", "Google API key"),
             ]
 
             # Flat list for lookup — only the actual (key, label) tuples.
@@ -915,10 +926,15 @@ def _menu_config() -> bool:
                         continue
                     if selected_key == "llm_provider":
                         normalized_provider = value.lower()
-                        if normalized_provider not in ("gemini", "local", "ollama"):
-                            typer.echo("Invalid LLM provider. Must be 'gemini' or 'local'. Skipping.")
+                        google_aliases = {"gemini", "google", "google_api", "google-api", "google api"}
+                        valid_providers = google_aliases | {"local", "ollama"}
+                        if normalized_provider not in valid_providers:
+                            typer.echo("Invalid LLM provider. Must be 'gemini'/'google api' or 'local'. Skipping.")
                             continue
-                        value = "local" if normalized_provider == "ollama" else normalized_provider
+                        if normalized_provider in google_aliases:
+                            value = "gemini"
+                        elif normalized_provider == "ollama":
+                            value = "local"
                     if selected_key == "use_dynaudnorm":
                         if value.lower() not in ("true", "false", "1", "0", "yes", "no"):
                             typer.echo("Invalid boolean for use_dynaudnorm. Skipping.")

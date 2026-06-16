@@ -346,6 +346,24 @@ def _render_structured_notes_markdown(note_data: dict[str, Any]) -> str:
     )
 
 
+def _apply_thinking_config(
+    config_dict: dict,
+    types: object | None,
+    model_name: str,
+    thinking_level: str,
+) -> None:
+    if not types:
+        return
+
+    normalized_model = normalize_gemini_model_name(model_name)
+    if normalized_model.startswith("gemma-4-") and thinking_level != "high":
+        return
+
+    config_dict["thinking_config"] = types.ThinkingConfig(  # type: ignore[attr-defined]
+        thinking_level=thinking_level
+    )
+
+
 class LLMConfigError(Exception):
     """Configuration missing or invalid."""
 
@@ -378,7 +396,7 @@ class GeminiLLMAdapter:
 
     def __init__(self, config: LLMConfig) -> None:
         if not config.api_key or not config.api_key.strip():
-            raise LLMConfigError("Gemini API key is required.")
+            raise LLMConfigError("Google API key is required.")
         self.config = config
 
         try:
@@ -434,10 +452,12 @@ class GeminiLLMAdapter:
                 prompt = _build_transcript_refinement_prompt(chunk)
 
                 config_dict: dict = {"system_instruction": system_instructions}
-                if types:
-                    config_dict["thinking_config"] = types.ThinkingConfig(
-                        thinking_level=self.config.thinking_level  # type: ignore
-                    )
+                _apply_thinking_config(
+                    config_dict,
+                    types,
+                    self.config.model_name,
+                    self.config.thinking_level,
+                )
 
                 response = self.client.models.generate_content(
                     model=self._normalize_model_name(self.config.model_name),
@@ -517,10 +537,12 @@ class GeminiLLMAdapter:
                     )
             
             config_dict: dict = {"system_instruction": system_instructions}
-            if types:
-                config_dict["thinking_config"] = types.ThinkingConfig(
-                    thinking_level=self.config.thinking_level  # type: ignore
-                )
+            _apply_thinking_config(
+                config_dict,
+                types,
+                self.config.model_name,
+                self.config.thinking_level,
+            )
 
             try:
                 response = self.client.models.generate_content(

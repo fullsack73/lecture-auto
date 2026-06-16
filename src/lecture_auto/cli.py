@@ -116,6 +116,8 @@ def _build_service() -> SessionService:
         or config_llm_provider
         or "gemini"
     ).strip().lower()
+    if llm_provider in {"google", "google_api", "google-api", "google api"}:
+        llm_provider = "gemini"
     if llm_provider == "local":
         llm_provider = "ollama"
     
@@ -423,8 +425,8 @@ def config_set(
     stt_api_key: str | None = typer.Option(None, "--stt-api-key", help="STT API key"),
     stt_mode: str | None = typer.Option(None, "--stt-mode", help="STT mode (api or local)"),
     stt_local_model: str | None = typer.Option(None, "--stt-local-model", help="Local Whisper model name (e.g. base, medium, large-v3)"),
-    gemini_api_key: str | None = typer.Option(None, "--gemini-api-key", help="Gemini API key for LLM"),
-    llm_model_name: str | None = typer.Option(None, "--llm-model", help="LLM model name (gemini-3.1-flash-lite, gemini-3-flash-preview, or gemini-3.1-pro-preview)"),
+    gemini_api_key: str | None = typer.Option(None, "--gemini-api-key", help="Google API key for hosted LLMs"),
+    llm_model_name: str | None = typer.Option(None, "--llm-model", help="LLM model name (Gemini or Gemma 4 hosted model ID)"),
     llm_thinking_level: str | None = typer.Option(None, "--llm-thinking-level", help="LLM thinking level (minimal, low, medium, high)"),
     audio_format: str | None = typer.Option(None, "--audio-format", help="Default audio format for recordings (wav or mp3)"),
     capture_source: str | None = typer.Option(None, "--capture-source", help="Capture source (microphone or system_audio)"),
@@ -497,7 +499,7 @@ def config_set(
 
     if gemini_api_key is not None:
         config_data["gemini_api_key"] = gemini_api_key
-        typer.echo(f"Global Gemini API key configured.")
+        typer.echo(f"Global Google API key configured.")
         updated = True
 
     if llm_model_name is not None:

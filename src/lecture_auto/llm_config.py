@@ -4,10 +4,15 @@ from dataclasses import dataclass
 
 
 DEFAULT_GEMINI_MODEL = "gemini-3.1-flash-lite"
+GEMMA4_MODEL_CHOICES = (
+    "gemma-4-26b-a4b-it",
+    "gemma-4-31b-it",
+)
 GEMINI_MODEL_CHOICES = (
     DEFAULT_GEMINI_MODEL,
     "gemini-3-flash-preview",
     "gemini-3.1-pro-preview",
+    *GEMMA4_MODEL_CHOICES,
 )
 GEMINI_MODEL_ALIASES = {
     "gemini-3.1-flash-lite-preview": DEFAULT_GEMINI_MODEL,
@@ -54,7 +59,7 @@ class LLMConfig:
     def validate(self) -> None:
         if self.provider == "gemini":
             if not self.api_key or not self.api_key.strip():
-                raise ValueError("Gemini API key is required and cannot be empty.")
+                raise ValueError("Google API key is required and cannot be empty.")
         elif self.provider == "ollama":
             # Ollama doesn't require API key
             pass
