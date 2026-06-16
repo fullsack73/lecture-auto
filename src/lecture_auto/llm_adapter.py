@@ -29,14 +29,17 @@ STRUCTURED_NOTE_SCHEMA_DESCRIPTION = (
 
 STRUCTURED_NOTE_SECTION_INSTRUCTIONS = {
     "topic_overview": (
-        "Return 3-5 bullets capturing lecture scope, main arc, and why the lecture matters."
+        "Return 3-5 bullets capturing lecture scope, main arc, and why the lecture matters. "
+        "Each bullet should be specific to this lecture, not a generic course summary."
     ),
     "core_concepts": (
-        "Return bullets defining key terms, concepts, and relationships needed to understand the lecture."
+        "Return 6-12 bullets defining key terms, concepts, formulas, named methods, and relationships "
+        "needed to understand the lecture."
     ),
     "detailed_explanations": (
-        "Return 2-6 subtopics. Each subtopic needs a meaningful title and bullets covering reasoning, "
-        "mechanisms, steps, formulas, tradeoffs, caveats, and important distinctions."
+        "Return 2-6 subtopics. Each subtopic needs a meaningful title and 4-8 bullets covering reasoning, "
+        "mechanisms, steps, formulas, tradeoffs, caveats, speaker emphasis, and important distinctions. "
+        "Bullets should be self-contained enough to study from without the transcript."
     ),
     "examples_mentioned": (
         "Return only examples explicitly mentioned in the transcript. If none, return ['Not mentioned.']."
@@ -103,6 +106,7 @@ def _build_structured_notes_json_system_instruction(
     context_topic: str | None,
     language: str | None,
     material_note: str = "",
+    template_note: str = "",
 ) -> str:
     topic_prompt = f"Lecture topic: {context_topic}. " if context_topic else ""
     lang_prompt = f"Write all JSON string values in {language}. " if language else ""
@@ -113,6 +117,9 @@ def _build_structured_notes_json_system_instruction(
         "Return valid JSON only. No markdown. No code fence. No explanation. "
         "If a string contains a literal backslash, escape it as a double backslash. "
         "Use transcript evidence only; do not invent facts. "
+        "Preserve proper nouns, technical terms, equations, code, and quoted phrases from the transcript. "
+        "Prefer dense study notes over broad summaries: capture definitions, mechanisms, assumptions, dependencies, "
+        "formulas, code behavior, examples, caveats, contrasts, misconceptions, and instructor emphasis when present. "
         f"Schema exactly: {STRUCTURED_NOTE_SCHEMA_DESCRIPTION}. "
         f"Section requirements: {_format_structured_note_section_requirements()} "
         "topic_overview: lecture scope and main arc. "
@@ -123,8 +130,29 @@ def _build_structured_notes_json_system_instruction(
         "Questions must cover central concepts, causal relationships, mechanisms, assumptions, examples, contrasts, and why ideas matter. "
         "Avoid trivia, narrow recall, and generic questions. "
         "exam_related_mentions: explicit grading, test, homework, assessment cues only. If none, use ['Not mentioned.']. "
-        "Every array must contain strings. Detailed explanation titles must be meaningful, never placeholders like 'Sub Topic 1'. "
+        "All bullet arrays must contain strings. detailed_explanations must be an array of objects with title and bullets. "
+        "Detailed explanation titles must be meaningful, never placeholders like 'Sub Topic 1'. "
+        "Do not copy placeholder text from templates. "
+        f"{template_note}"
         f"{material_note}"
+    )
+
+
+def _build_template_note(template: str) -> str:
+    template = (template or "").strip()
+    if not template:
+        return ""
+    headings = [
+        line.strip()
+        for line in template.splitlines()
+        if line.lstrip().startswith("#")
+    ]
+    if not headings:
+        return ""
+    heading_text = "; ".join(headings[:12])
+    return (
+        " Final Markdown template headings for organization: "
+        f"{heading_text}. Use these as layout guidance only; still return the JSON schema exactly."
     )
 
 
@@ -137,6 +165,38 @@ def _build_structured_notes_json_prompt(*, transcript: str) -> str:
         "<<<\n"
         f"{transcript}\n"
         ">>>"
+    )
+
+
+def _build_structured_notes_chunk_prompt(
+    *,
+    transcript: str,
+    chunk_index: int,
+    chunk_count: int,
+) -> str:
+    return (
+        "Extract candidate structured lecture-note JSON from this transcript chunk. "
+        "Use only evidence in this chunk. Preserve order, terminology, formulas, examples, and instructor cues. "
+        "Sparse sections may be concise, but keep concrete details for later merging. "
+        "Return every schema key exactly once. Return JSON only.\n\n"
+        f"Chunk: {chunk_index} of {chunk_count}\n"
+        f"JSON shape: {STRUCTURED_NOTE_SCHEMA_DESCRIPTION}\n\n"
+        "Transcript chunk:\n"
+        "<<<\n"
+        f"{transcript}\n"
+        ">>>"
+    )
+
+
+def _build_structured_notes_merge_prompt(*, chunk_notes: list[dict[str, Any]]) -> str:
+    return (
+        "Merge these chunk-level lecture-note JSON objects into one complete study-note JSON object. "
+        "Deduplicate repeated ideas, preserve lecture order, keep important details, and synthesize related points. "
+        "Do not invent facts beyond the chunk notes. "
+        "Return every schema key exactly once. Return JSON only.\n\n"
+        f"JSON shape: {STRUCTURED_NOTE_SCHEMA_DESCRIPTION}\n\n"
+        "Chunk notes:\n"
+        f"{json.dumps(chunk_notes, ensure_ascii=False)}"
     )
 
 
@@ -206,6 +266,33 @@ def _load_json_object_candidate(candidate: str) -> Any:
 
 def _escape_invalid_json_backslashes(candidate: str) -> str:
     return re.sub(r'\\(?!["\\/bfnrtu])', r"\\\\", candidate)
+
+
+def _iter_text_chunks(text: str, chunk_size: int) -> list[str]:
+    chunks: list[str] = []
+    start_idx = 0
+    text_length = len(text)
+    while start_idx < text_length:
+        end_idx = min(start_idx + chunk_size, text_length)
+
+        if end_idx < text_length:
+            last_break = max(
+                text.rfind("\n\n", start_idx, end_idx),
+                text.rfind("\n", start_idx, end_idx),
+                text.rfind(" ", start_idx, end_idx),
+            )
+            if last_break > start_idx + chunk_size // 2:
+                end_idx = last_break
+
+        chunk = text[start_idx:end_idx].strip()
+        if chunk:
+            chunks.append(chunk)
+
+        start_idx = end_idx
+        while start_idx < text_length and text[start_idx].isspace():
+            start_idx += 1
+
+    return chunks
 
 
 def _clean_note_item(value: Any) -> str | None:
@@ -292,15 +379,38 @@ def _validate_structured_note_data(note_data: dict[str, Any]) -> list[str]:
         if not value:
             issues.append(f"{key} must contain at least one bullet")
 
+    core_concepts = note_data.get("core_concepts") or []
+    if len(core_concepts) < 6:
+        issues.append("core_concepts must contain 6-12 concrete study bullets")
+    if len(core_concepts) > 12:
+        issues.append("core_concepts must contain no more than 12 bullets")
+
     questions = note_data.get("questions_to_review") or []
     if len([q for q in questions if q and q != "Not mentioned."]) < 4:
         issues.append("questions_to_review must contain 4-8 core reconstruction questions")
+    if len(questions) > 8:
+        issues.append("questions_to_review must contain no more than 8 questions")
 
     detailed = note_data.get("detailed_explanations") or []
+    if detailed and len(detailed) < 2:
+        issues.append("detailed_explanations must contain 2-6 meaningful subtopics")
+    if len(detailed) > 6:
+        issues.append("detailed_explanations must contain no more than 6 subtopics")
     for item in detailed:
         title = str(item.get("title", "")).strip().lower()
-        if title.startswith("sub topic") or title.startswith("subtopic"):
+        if (
+            title.startswith("sub topic")
+            or title.startswith("subtopic")
+            or title in {"detailed explanation", "topic", "main topic"}
+        ):
             issues.append("detailed_explanations titles must be meaningful, not placeholder subtopic names")
+            break
+        bullets = _normalize_note_list(item.get("bullets"))
+        if len(bullets) < 4:
+            issues.append("each detailed_explanations subtopic must contain 4-8 study bullets")
+            break
+        if len(bullets) > 8:
+            issues.append("each detailed_explanations subtopic must contain no more than 8 bullets")
             break
     return issues
 
@@ -499,7 +609,7 @@ class GeminiLLMAdapter:
             types = None  # type: ignore
 
         try:
-            _ = template
+            template_note = _build_template_note(template)
             uploaded_file = None
             material_note = ""
 
@@ -521,12 +631,8 @@ class GeminiLLMAdapter:
                 context_topic=context_topic,
                 language=self.config.language,
                 material_note=material_note,
+                template_note=template_note,
             )
-
-            prompt = _build_structured_notes_json_prompt(transcript=transcript)
-            contents: list = [prompt]
-            if uploaded_file:
-                contents.append(uploaded_file)
 
             config_dict: dict = {
                 "system_instruction": system_instructions,
@@ -540,20 +646,64 @@ class GeminiLLMAdapter:
             )
 
             try:
-                response = self.client.models.generate_content(
-                    model=self._normalize_model_name(self.config.model_name),
-                    contents=contents,
-                    config=config_dict,  # type: ignore
-                )
+                note_chunk_size = self.config.resolve_chunk_size(len(transcript))
+                chunks = _iter_text_chunks(transcript, note_chunk_size)
+                chunk_notes: list[dict[str, Any]] = []
+
+                if len(chunks) > 1:
+                    for index, chunk in enumerate(chunks, start=1):
+                        chunk_contents: list = [
+                            _build_structured_notes_chunk_prompt(
+                                transcript=chunk,
+                                chunk_index=index,
+                                chunk_count=len(chunks),
+                            )
+                        ]
+                        if uploaded_file:
+                            chunk_contents.append(uploaded_file)
+                        chunk_response = self.client.models.generate_content(
+                            model=self._normalize_model_name(self.config.model_name),
+                            contents=chunk_contents,
+                            config=config_dict,  # type: ignore
+                        )
+                        chunk_text = (getattr(chunk_response, "text", "") or "").strip()
+                        chunk_notes.append(
+                            _normalize_structured_note_data(_extract_json_object(chunk_text))
+                        )
+
+                    merge_contents: list = [
+                        _build_structured_notes_merge_prompt(chunk_notes=chunk_notes)
+                    ]
+                    if uploaded_file:
+                        merge_contents.append(uploaded_file)
+                    response = self.client.models.generate_content(
+                        model=self._normalize_model_name(self.config.model_name),
+                        contents=merge_contents,
+                        config=config_dict,  # type: ignore
+                    )
+                else:
+                    contents: list = [_build_structured_notes_json_prompt(transcript=transcript)]
+                    if uploaded_file:
+                        contents.append(uploaded_file)
+                    response = self.client.models.generate_content(
+                        model=self._normalize_model_name(self.config.model_name),
+                        contents=contents,
+                        config=config_dict,  # type: ignore
+                    )
 
                 raw_text = (getattr(response, "text", "") or "").strip()
                 note_data = _normalize_structured_note_data(_extract_json_object(raw_text))
                 issues = _validate_structured_note_data(note_data)
 
                 if issues:
+                    repair_evidence = (
+                        json.dumps(chunk_notes, ensure_ascii=False)
+                        if chunk_notes
+                        else transcript
+                    )
                     repair_contents: list = [
                         _build_structured_notes_repair_prompt(
-                            transcript=transcript,
+                            transcript=repair_evidence,
                             previous_json=note_data,
                             issues=issues,
                         )
@@ -691,39 +841,87 @@ class OllamaLLMAdapter:
             return transcript
 
         material_note = " (Note: PDF material attachment is not supported for Ollama.)" if material_path else ""
+        template_note = _build_template_note(template)
 
         system_instructions = _build_structured_notes_json_system_instruction(
             context_topic=context_topic,
             language=self.config.language,
             material_note=material_note,
+            template_note=template_note,
         )
 
         try:
-            _ = template
             raw_note_data: dict[str, Any] = {}
-            for section_key in STRUCTURED_NOTE_SCHEMA_KEYS:
-                prompt = _build_structured_note_section_prompt(
-                    transcript=transcript,
-                    section_key=section_key,
-                )
-                response = self.ollama.chat(
+            note_chunk_size = self.config.resolve_chunk_size(len(transcript))
+            chunks = _iter_text_chunks(transcript, note_chunk_size)
+            chunk_notes: list[dict[str, Any]] = []
+
+            if len(chunks) > 1:
+                for index, chunk in enumerate(chunks, start=1):
+                    response = self.ollama.chat(
+                        model=self.config.model_name,
+                        messages=[
+                            {"role": "system", "content": system_instructions},
+                            {
+                                "role": "user",
+                                "content": _build_structured_notes_chunk_prompt(
+                                    transcript=chunk,
+                                    chunk_index=index,
+                                    chunk_count=len(chunks),
+                                ),
+                            },
+                        ],
+                        format="json",
+                    )
+                    raw_text = response.get("message", {}).get("content", "").strip()
+                    chunk_notes.append(
+                        _normalize_structured_note_data(_extract_json_object(raw_text))
+                    )
+
+                merge_response = self.ollama.chat(
                     model=self.config.model_name,
                     messages=[
                         {"role": "system", "content": system_instructions},
-                        {"role": "user", "content": prompt}
+                        {
+                            "role": "user",
+                            "content": _build_structured_notes_merge_prompt(
+                                chunk_notes=chunk_notes
+                            ),
+                        },
                     ],
                     format="json",
                 )
-                raw_text = response.get("message", {}).get("content", "").strip()
-                parsed = _extract_json_object(raw_text)
-                raw_note_data[section_key] = _extract_section_value(parsed, section_key)
+                merge_text = merge_response.get("message", {}).get("content", "").strip()
+                raw_note_data = _extract_json_object(merge_text)
+            else:
+                for section_key in STRUCTURED_NOTE_SCHEMA_KEYS:
+                    prompt = _build_structured_note_section_prompt(
+                        transcript=transcript,
+                        section_key=section_key,
+                    )
+                    response = self.ollama.chat(
+                        model=self.config.model_name,
+                        messages=[
+                            {"role": "system", "content": system_instructions},
+                            {"role": "user", "content": prompt}
+                        ],
+                        format="json",
+                    )
+                    raw_text = response.get("message", {}).get("content", "").strip()
+                    parsed = _extract_json_object(raw_text)
+                    raw_note_data[section_key] = _extract_section_value(parsed, section_key)
 
             note_data = _normalize_structured_note_data(raw_note_data)
             issues = _validate_structured_note_data(note_data)
 
             if issues:
+                repair_evidence = (
+                    json.dumps(chunk_notes, ensure_ascii=False)
+                    if chunk_notes
+                    else transcript
+                )
                 repair_prompt = _build_structured_notes_repair_prompt(
-                    transcript=transcript,
+                    transcript=repair_evidence,
                     previous_json=note_data,
                     issues=issues,
                 )

@@ -23,6 +23,33 @@ def _ollama_raw_response(content: str) -> dict:
     return {"message": {"content": content}}
 
 
+def _six_core_concepts(seed: str) -> list[str]:
+    return [f"{seed} 핵심 개념 {index}는 강의 이해에 필요한 구체 항목이다." for index in range(1, 7)]
+
+
+def _detailed_sections() -> list[dict[str, list[str] | str]]:
+    return [
+        {
+            "title": "정렬 알고리즘 비교",
+            "bullets": [
+                "정렬 알고리즘은 데이터를 기준에 맞게 재배열하는 절차다.",
+                "버블 정렬은 인접 원소를 반복 비교해 위치를 바꾼다.",
+                "병합 정렬은 배열을 나눈 뒤 정렬된 부분 결과를 합친다.",
+                "입력 크기가 커질수록 시간 복잡도 차이가 선택 기준이 된다.",
+            ],
+        },
+        {
+            "title": "시간 복잡도 해석",
+            "bullets": [
+                "시간 복잡도는 입력 크기 증가에 따른 실행 시간 증가율을 설명한다.",
+                "복잡도 비교는 같은 문제를 푸는 여러 알고리즘의 효율을 구분한다.",
+                "최악의 경우 분석은 성능 보장을 이해하는 데 중요하다.",
+                "강의는 정렬 방식의 구조와 비용을 함께 비교한다.",
+            ],
+        },
+    ]
+
+
 def test_ollama_notes_harness_repairs_json_and_renders_structured_markdown() -> None:
     adapter = _adapter()
     adapter.ollama.chat.side_effect = [
@@ -72,6 +99,9 @@ def test_ollama_notes_harness_repairs_json_and_renders_structured_markdown() -> 
         call.kwargs["messages"][1]["content"]
         for call in adapter.ollama.chat.call_args_list
     ]
+    system_prompt = adapter.ollama.chat.call_args_list[0].kwargs["messages"][0]["content"]
+    assert "Final Markdown template headings" in system_prompt
+    assert "# ignored template" in system_prompt
     assert all("# ignored template" not in prompt for prompt in all_prompts)
     assert "Generate only this section: topic_overview" in all_prompts[0]
     assert "Generate only this section: questions_to_review" in all_prompts[4]
@@ -81,17 +111,8 @@ def test_ollama_notes_harness_uses_valid_json_without_repair() -> None:
     adapter = _adapter()
     adapter.ollama.chat.side_effect = [
         _ollama_response({"topic_overview": ["정렬 알고리즘의 목적과 비교 기준"]}),
-        _ollama_response({"core_concepts": ["시간 복잡도는 입력 크기에 따른 실행 시간 증가를 설명한다."]}),
-        _ollama_response(
-            {
-                "detailed_explanations": [
-                    {
-                        "title": "정렬 알고리즘 비교",
-                        "bullets": ["버블 정렬과 병합 정렬은 시간 복잡도에서 차이가 난다."],
-                    }
-                ]
-            }
-        ),
+        _ollama_response({"core_concepts": _six_core_concepts("정렬")}),
+        _ollama_response({"detailed_explanations": _detailed_sections()}),
         _ollama_response({"examples_mentioned": ["버블 정렬", "병합 정렬"]}),
         _ollama_response(
             {
@@ -119,14 +140,30 @@ def test_ollama_notes_harness_recovers_invalid_backslash_escapes() -> None:
     adapter = _adapter()
     adapter.ollama.chat.side_effect = [
         _ollama_response({"topic_overview": ["미분 기호와 최적화 개요"]}),
-        _ollama_raw_response(r'{"core_concepts":["\alpha는 학습률을 나타낸다."]}'),
+        _ollama_raw_response(
+            r'{"core_concepts":["\alpha는 학습률을 나타낸다.","최적화는 손실을 줄이는 방향으로 파라미터를 조정한다.","기울기는 손실 함수가 증가하는 방향을 나타낸다.","업데이트 식은 기울기와 학습률을 함께 사용한다.","학습률이 크면 발산 위험이 커질 수 있다.","학습률이 작으면 수렴 속도가 느려질 수 있다."]}'
+        ),
         _ollama_response(
             {
                 "detailed_explanations": [
                     {
                         "title": "학습률과 업데이트",
-                        "bullets": [r"가중치 업데이트는 \alpha 값에 영향을 받는다."],
-                    }
+                        "bullets": [
+                            r"가중치 업데이트는 \alpha 값에 영향을 받는다.",
+                            "학습률은 한 번의 업데이트에서 이동하는 크기를 정한다.",
+                            "기울기는 손실을 줄이기 위한 조정 방향 계산에 쓰인다.",
+                            "학습률 선택은 수렴 속도와 안정성 사이의 균형이다.",
+                        ],
+                    },
+                    {
+                        "title": "최적화 안정성",
+                        "bullets": [
+                            "너무 큰 학습률은 최솟값 주변을 지나치게 만들 수 있다.",
+                            "너무 작은 학습률은 많은 반복을 요구할 수 있다.",
+                            "업데이트 규칙을 이해하면 최적화 흐름을 재구성할 수 있다.",
+                            "강의는 기호와 실제 학습 동작을 연결한다.",
+                        ],
+                    },
                 ]
             }
         ),

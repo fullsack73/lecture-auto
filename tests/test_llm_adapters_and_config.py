@@ -1,6 +1,7 @@
 """Focused tests for LLMConfig and GeminiLLMAdapter config-layer changes (Task Group 1)."""
 from __future__ import annotations
 
+import json
 import pytest
 from unittest.mock import MagicMock, patch
 
@@ -100,6 +101,81 @@ def test_refine_transcript_uses_lecture_transcript_editor_prompt() -> None:
     assert "Algorithms" in system_instruction
     assert "Korean" in system_instruction
     assert "<<<\nraw transcript\n>>>" in contents
+
+
+def test_gemini_notes_use_chunk_merge_for_long_transcripts() -> None:
+    mock_client_instance = MagicMock()
+
+    payload = {
+        "topic_overview": [
+            "Long lecture introduces graph search goals.",
+            "The lecture moves from traversal mechanics to complexity.",
+            "The topic matters because traversal supports many algorithms.",
+        ],
+        "core_concepts": [
+            "Breadth-first search explores vertices by distance from the source.",
+            "Depth-first search follows a path before backtracking.",
+            "A queue preserves BFS frontier order.",
+            "A stack or recursion preserves DFS exploration state.",
+            "Visited sets prevent repeated work on cycles.",
+            "Time complexity depends on vertices plus edges.",
+        ],
+        "detailed_explanations": [
+            {
+                "title": "Breadth-First Search Mechanics",
+                "bullets": [
+                    "BFS starts from a source vertex and visits neighbors in waves.",
+                    "The queue stores discovered vertices waiting for expansion.",
+                    "Marking vertices as visited prevents cycles from re-entering the frontier.",
+                    "BFS distance layers explain why it finds shortest unweighted paths.",
+                ],
+            },
+            {
+                "title": "Depth-First Search Mechanics",
+                "bullets": [
+                    "DFS explores one branch until it cannot continue.",
+                    "Backtracking returns control to the most recent unfinished vertex.",
+                    "Recursion or an explicit stack records the active path.",
+                    "DFS structure supports topological sorting and component discovery.",
+                ],
+            },
+        ],
+        "examples_mentioned": ["Graph traversal from a source vertex."],
+        "questions_to_review": [
+            "How does BFS frontier order determine traversal layers?",
+            "Why does DFS need backtracking to complete graph exploration?",
+            "How do visited sets change behavior on cyclic graphs?",
+            "Why is graph traversal complexity expressed using vertices plus edges?",
+        ],
+        "exam_related_mentions": ["Not mentioned."],
+    }
+
+    def generate_content(**kwargs):
+        response = MagicMock()
+        response.text = json.dumps(payload)
+        return response
+
+    mock_client_instance.models.generate_content.side_effect = generate_content
+
+    config = LLMConfig(api_key="valid-key", chunk_size=500)
+    with patch("google.genai.Client", return_value=mock_client_instance):
+        adapter = GeminiLLMAdapter(config)
+
+    transcript = "graph traversal lecture section " * 100
+    notes = adapter.generate_notes(
+        transcript,
+        "# Structured Lecture Notes\n\n## Topic Overview",
+    )
+
+    contents = [
+        call.kwargs["contents"][0]
+        for call in mock_client_instance.models.generate_content.call_args_list
+    ]
+
+    assert mock_client_instance.models.generate_content.call_count > 2
+    assert any("Chunk: 1 of" in content for content in contents)
+    assert "Merge these chunk-level lecture-note JSON objects" in contents[-1]
+    assert "### Breadth-First Search Mechanics" in notes
 
 
 def test_model_name_normalization_maps_gemini_3_0_alias() -> None:
