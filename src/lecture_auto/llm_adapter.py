@@ -18,7 +18,16 @@ STRUCTURED_NOTE_SCHEMA_KEYS = (
     "exam_related_mentions",
 )
 
-OLLAMA_NOTE_SECTION_INSTRUCTIONS = {
+STRUCTURED_NOTE_SCHEMA_DESCRIPTION = (
+    '{"topic_overview":["..."],'
+    '"core_concepts":["..."],'
+    '"detailed_explanations":[{"title":"...","bullets":["..."]}],'
+    '"examples_mentioned":["..."],'
+    '"questions_to_review":["..."],'
+    '"exam_related_mentions":["..."]}'
+)
+
+STRUCTURED_NOTE_SECTION_INSTRUCTIONS = {
     "topic_overview": (
         "Return 3-5 bullets capturing lecture scope, main arc, and why the lecture matters."
     ),
@@ -43,6 +52,13 @@ OLLAMA_NOTE_SECTION_INSTRUCTIONS = {
         "If none, return ['Not mentioned.']."
     ),
 }
+
+
+def _format_structured_note_section_requirements() -> str:
+    return " ".join(
+        f"{section_key}: {instruction}"
+        for section_key, instruction in STRUCTURED_NOTE_SECTION_INSTRUCTIONS.items()
+    )
 
 
 def _build_transcript_refinement_system_instruction(
@@ -82,39 +98,7 @@ def _build_transcript_refinement_prompt(chunk: str) -> str:
     )
 
 
-def _build_structured_notes_system_instruction(
-    *,
-    context_topic: str | None,
-    language: str | None,
-    material_note: str = "",
-) -> str:
-    topic_prompt = f"The lecture topic is '{context_topic}'. " if context_topic else ""
-    lang_prompt = f"Output your response entirely in {language}. " if language else ""
-    return (
-        f"You are a lecture note writer. {topic_prompt}"
-        "Generate study notes that strictly follow the provided Structured Lecture Notes markdown template. "
-        "Output only markdown, with no preface, no code fence, and no conversational text. "
-        "Keep the template's top-level headings, order, and section names unchanged. "
-        "Replace placeholder subtopic headings such as 'Sub Topic 1' with meaningful lecture subtopic names; "
-        "add or remove subtopic blocks only when the transcript supports it. "
-        "Use bullet points under every section. If the transcript has no evidence for a section, write '- Not mentioned.' "
-        "Topic Overview should capture the lecture scope in a few high-signal bullets. "
-        "Core Concepts should define key terms and relationships. "
-        "Detailed Explanations should contain the main reasoning, mechanisms, steps, formulas, tradeoffs, and caveats. "
-        "Examples Mentioned should include only examples explicitly present in the transcript or attached material. "
-        "Questions to Review should be a compact set of core study questions that, if answered and explored well, "
-        "would let a student understand and reconstruct the lecture's main content, logic, and implications. "
-        "Prioritize questions about central concepts, causal relationships, mechanisms, assumptions, examples, "
-        "contrasts, and why each idea matters; avoid trivia, overly narrow recall, and generic questions. "
-        "Exam related mentions should capture only explicit grading, test, homework, or assessment cues. "
-        "Preserve important terminology, names, equations, and numbers exactly when they appear. "
-        "Do not invent facts or overstate uncertain content. "
-        f"{lang_prompt}"
-        f"{material_note}"
-    )
-
-
-def _build_ollama_structured_notes_system_instruction(
+def _build_structured_notes_json_system_instruction(
     *,
     context_topic: str | None,
     language: str | None,
@@ -129,13 +113,8 @@ def _build_ollama_structured_notes_system_instruction(
         "Return valid JSON only. No markdown. No code fence. No explanation. "
         "If a string contains a literal backslash, escape it as a double backslash. "
         "Use transcript evidence only; do not invent facts. "
-        "Schema exactly: "
-        '{"topic_overview":["..."],'
-        '"core_concepts":["..."],'
-        '"detailed_explanations":[{"title":"...","bullets":["..."]}],'
-        '"examples_mentioned":["..."],'
-        '"questions_to_review":["..."],'
-        '"exam_related_mentions":["..."]}. '
+        f"Schema exactly: {STRUCTURED_NOTE_SCHEMA_DESCRIPTION}. "
+        f"Section requirements: {_format_structured_note_section_requirements()} "
         "topic_overview: lecture scope and main arc. "
         "core_concepts: key terms, definitions, relationships. "
         "detailed_explanations: main mechanisms, reasoning, steps, formulas, tradeoffs, caveats. "
@@ -149,7 +128,19 @@ def _build_ollama_structured_notes_system_instruction(
     )
 
 
-def _build_ollama_structured_note_section_prompt(*, transcript: str, section_key: str) -> str:
+def _build_structured_notes_json_prompt(*, transcript: str) -> str:
+    return (
+        "Generate complete structured lecture-note JSON for this transcript. "
+        "Return every schema key exactly once. Return JSON only.\n\n"
+        f"JSON shape: {STRUCTURED_NOTE_SCHEMA_DESCRIPTION}\n\n"
+        "Transcript:\n"
+        "<<<\n"
+        f"{transcript}\n"
+        ">>>"
+    )
+
+
+def _build_structured_note_section_prompt(*, transcript: str, section_key: str) -> str:
     if section_key == "detailed_explanations":
         schema = '{"detailed_explanations":[{"title":"...","bullets":["..."]}]}'
     else:
@@ -157,7 +148,7 @@ def _build_ollama_structured_note_section_prompt(*, transcript: str, section_key
 
     return (
         f"Generate only this section: {section_key}.\n"
-        f"Instruction: {OLLAMA_NOTE_SECTION_INSTRUCTIONS[section_key]}\n"
+        f"Instruction: {STRUCTURED_NOTE_SECTION_INSTRUCTIONS[section_key]}\n"
         f"Return JSON exactly matching this shape: {schema}\n\n"
         "Transcript:\n"
         "<<<\n"
@@ -166,7 +157,7 @@ def _build_ollama_structured_note_section_prompt(*, transcript: str, section_key
     )
 
 
-def _build_ollama_structured_notes_repair_prompt(
+def _build_structured_notes_repair_prompt(
     *,
     transcript: str,
     previous_json: dict[str, Any],
@@ -492,7 +483,7 @@ class GeminiLLMAdapter:
         template: str,
         context_topic: str | None = None, material_path: str | None = None,
     ) -> str:
-        """Generates lecture notes from transcript text and template in chunks."""
+        """Generates structured notes through provider-neutral JSON data."""
         if not transcript or not transcript.strip():
             return transcript
 
@@ -507,19 +498,10 @@ class GeminiLLMAdapter:
         except ImportError:
             types = None  # type: ignore
 
-        system_instructions = _build_structured_notes_system_instruction(
-            context_topic=context_topic,
-            language=self.config.language,
-        )
-
         try:
-            prompt = (
-                f"Template:\n{template}\n\n"
-                f"Transcript:\n{transcript}\n"
-            )
-
-            contents: list = [prompt]
+            _ = template
             uploaded_file = None
+            material_note = ""
 
             if material_path:
                 import os
@@ -530,13 +512,26 @@ class GeminiLLMAdapter:
                             mime_type="application/pdf"
                         )
                     uploaded_file = self.client.files.upload(**upload_kwargs)
-                    contents.append(uploaded_file)
-                    system_instructions += (
+                    material_note = (
                         " A lecture material PDF has been provided as supporting context. "
                         "Use it to verify terminology, structure, formulas, and examples, while prioritizing the transcript."
                     )
-            
-            config_dict: dict = {"system_instruction": system_instructions}
+
+            system_instructions = _build_structured_notes_json_system_instruction(
+                context_topic=context_topic,
+                language=self.config.language,
+                material_note=material_note,
+            )
+
+            prompt = _build_structured_notes_json_prompt(transcript=transcript)
+            contents: list = [prompt]
+            if uploaded_file:
+                contents.append(uploaded_file)
+
+            config_dict: dict = {
+                "system_instruction": system_instructions,
+                "response_mime_type": "application/json",
+            }
             _apply_thinking_config(
                 config_dict,
                 types,
@@ -550,6 +545,30 @@ class GeminiLLMAdapter:
                     contents=contents,
                     config=config_dict,  # type: ignore
                 )
+
+                raw_text = (getattr(response, "text", "") or "").strip()
+                note_data = _normalize_structured_note_data(_extract_json_object(raw_text))
+                issues = _validate_structured_note_data(note_data)
+
+                if issues:
+                    repair_contents: list = [
+                        _build_structured_notes_repair_prompt(
+                            transcript=transcript,
+                            previous_json=note_data,
+                            issues=issues,
+                        )
+                    ]
+                    if uploaded_file:
+                        repair_contents.append(uploaded_file)
+                    repair_response = self.client.models.generate_content(
+                        model=self._normalize_model_name(self.config.model_name),
+                        contents=repair_contents,
+                        config=config_dict,  # type: ignore
+                    )
+                    repair_text = (getattr(repair_response, "text", "") or "").strip()
+                    note_data = _normalize_structured_note_data(
+                        _extract_json_object(repair_text)
+                    )
             finally:
                 if uploaded_file and hasattr(uploaded_file, "name") and uploaded_file.name:
                     try:
@@ -557,8 +576,7 @@ class GeminiLLMAdapter:
                     except Exception:
                         pass # Best effort cleanup
 
-            text = (getattr(response, "text", "") or "").strip()
-            return text
+            return _render_structured_notes_markdown(note_data)
 
         except PermissionDenied as exc:
             raise LLMProviderAuthError(f"Gemini authentication failed: {exc}") from exc
@@ -674,7 +692,7 @@ class OllamaLLMAdapter:
 
         material_note = " (Note: PDF material attachment is not supported for Ollama.)" if material_path else ""
 
-        system_instructions = _build_ollama_structured_notes_system_instruction(
+        system_instructions = _build_structured_notes_json_system_instruction(
             context_topic=context_topic,
             language=self.config.language,
             material_note=material_note,
@@ -684,7 +702,7 @@ class OllamaLLMAdapter:
             _ = template
             raw_note_data: dict[str, Any] = {}
             for section_key in STRUCTURED_NOTE_SCHEMA_KEYS:
-                prompt = _build_ollama_structured_note_section_prompt(
+                prompt = _build_structured_note_section_prompt(
                     transcript=transcript,
                     section_key=section_key,
                 )
@@ -704,7 +722,7 @@ class OllamaLLMAdapter:
             issues = _validate_structured_note_data(note_data)
 
             if issues:
-                repair_prompt = _build_ollama_structured_notes_repair_prompt(
+                repair_prompt = _build_structured_notes_repair_prompt(
                     transcript=transcript,
                     previous_json=note_data,
                     issues=issues,

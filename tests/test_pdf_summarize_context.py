@@ -12,6 +12,29 @@ from lecture_auto.session_metadata_store import SessionMetadataStore
 from lecture_auto.session_service import SessionCommandError, SessionService
 
 
+def _note_payload(
+    *,
+    detailed_title: str = "Topic A details",
+    questions: list[str] | None = None,
+) -> dict:
+    return {
+        "topic_overview": ["Topic A overview"],
+        "core_concepts": ["Core concept"],
+        "detailed_explanations": [
+            {"title": detailed_title, "bullets": ["Detailed bullet"]}
+        ],
+        "examples_mentioned": ["Example"],
+        "questions_to_review": questions
+        or [
+            "What is Topic A?",
+            "Why does Topic A matter?",
+            "How does Topic A connect to the core concept?",
+            "What assumptions shape Topic A?",
+        ],
+        "exam_related_mentions": ["Not mentioned."],
+    }
+
+
 @pytest.fixture
 def mock_workspace(tmp_path: Path) -> Path:
     config_dir = tmp_path / ".lecture_auto"
@@ -104,7 +127,7 @@ def test_gemini_adapter_uploads_and_deletes_file() -> None:
         mock_client.files.upload.return_value = mock_upload
         
         mock_response = MagicMock()
-        mock_response.text = "Generated Notes with PDF"
+        mock_response.text = json.dumps(_note_payload(), ensure_ascii=False)
         mock_client.models.generate_content.return_value = mock_response
         
         with patch("os.path.exists", return_value=True):
@@ -115,7 +138,9 @@ def test_gemini_adapter_uploads_and_deletes_file() -> None:
                 material_path="/fake/path/to.pdf"
             )
             
-        assert res == "Generated Notes with PDF"
+        assert "# Structured Lecture Notes" in res
+        assert "### Topic A details" in res
+        assert "- Core concept" in res
         mock_client.files.upload.assert_called_once()
         upload_kwargs = mock_client.files.upload.call_args.kwargs
         assert upload_kwargs["file"] == "/fake/path/to.pdf"
@@ -124,6 +149,7 @@ def test_gemini_adapter_uploads_and_deletes_file() -> None:
 
         generate_kwargs = mock_client.models.generate_content.call_args.kwargs
         assert generate_kwargs["contents"][-1] is mock_upload
+        assert generate_kwargs["config"]["response_mime_type"] == "application/json"
         mock_client.files.delete.assert_called_once_with(name="uploaded_file_name_123")
 
 
@@ -154,3 +180,41 @@ def test_gemini_adapter_deletes_file_on_generation_failure() -> None:
         assert isinstance(upload_kwargs["config"], types.UploadFileConfig)
         assert upload_kwargs["config"].mime_type == "application/pdf"
         mock_client.files.delete.assert_called_once_with(name="uploaded_file_name_123")
+
+
+def test_gemini_adapter_repairs_json_and_renders_structured_markdown() -> None:
+    config = LLMConfig(api_key="fake-key")
+    with patch("google.genai.Client") as mock_client_cls:
+        adapter = GeminiLLMAdapter(config)
+        mock_client = mock_client_cls.return_value
+
+        first_response = MagicMock()
+        first_response.text = json.dumps(
+            _note_payload(
+                detailed_title="Sub Topic 1",
+                questions=["What is Topic A?"],
+            ),
+            ensure_ascii=False,
+        )
+        repair_response = MagicMock()
+        repair_response.text = json.dumps(
+            _note_payload(detailed_title="Evidence-based Topic A"),
+            ensure_ascii=False,
+        )
+        mock_client.models.generate_content.side_effect = [
+            first_response,
+            repair_response,
+        ]
+
+        notes = adapter.generate_notes(
+            transcript="test transcript",
+            template="# ignored template",
+            context_topic="Topic A",
+        )
+
+    assert "### Evidence-based Topic A" in notes
+    assert "## Questions to Review" in notes
+    assert mock_client.models.generate_content.call_count == 2
+    repair_prompt = mock_client.models.generate_content.call_args_list[1].kwargs["contents"][0]
+    assert "Repair this JSON" in repair_prompt
+    assert "# ignored template" not in repair_prompt
