@@ -256,12 +256,129 @@ def _extract_json_object(text: str) -> dict[str, Any]:
 
 
 def _load_json_object_candidate(candidate: str) -> Any:
-    for source in (candidate, _escape_invalid_json_backslashes(candidate)):
+    latex_safe_candidate = _escape_latex_json_backslashes(candidate)
+    for source in (
+        latex_safe_candidate,
+        candidate,
+        _escape_invalid_json_backslashes(latex_safe_candidate),
+        _escape_invalid_json_backslashes(candidate),
+    ):
         try:
             return json.loads(source)
         except json.JSONDecodeError:
             continue
     return None
+
+
+_LATEX_JSON_COMMAND_PREFIXES = (
+    "rightarrow",
+    "leftarrow",
+    "leftrightarrow",
+    "epsilon",
+    "partial",
+    "approx",
+    "forall",
+    "exists",
+    "lambda",
+    "nabla",
+    "theta",
+    "alpha",
+    "gamma",
+    "delta",
+    "omega",
+    "sigma",
+    "times",
+    "sqrt",
+    "frac",
+    "beta",
+    "cdot",
+    "leq",
+    "geq",
+    "neq",
+    "phi",
+    "sum",
+    "int",
+    "log",
+    "sin",
+    "cos",
+    "tan",
+    "exp",
+    "min",
+    "max",
+    "argmin",
+    "argmax",
+    "mathbb",
+    "mathcal",
+    "text",
+    "vec",
+    "hat",
+    "bar",
+    "tilde",
+    "dot",
+    "infty",
+    "subset",
+    "supset",
+    "cup",
+    "cap",
+    "emptyset",
+    "land",
+    "lor",
+    "neg",
+    "pm",
+    "mp",
+    "div",
+    "to",
+    "in",
+)
+
+
+def _escape_latex_json_backslashes(candidate: str) -> str:
+    """Protect common LaTeX commands before JSON parsing consumes them as escapes."""
+    result: list[str] = []
+    in_string = False
+    i = 0
+
+    while i < len(candidate):
+        char = candidate[i]
+        if not in_string:
+            result.append(char)
+            if char == '"':
+                in_string = True
+            i += 1
+            continue
+
+        if char == '"':
+            result.append(char)
+            in_string = False
+            i += 1
+            continue
+
+        if char == "\\":
+            if _starts_latex_command(candidate, i + 1):
+                result.append("\\\\")
+                i += 1
+                continue
+
+            result.append(char)
+            if i + 1 < len(candidate):
+                result.append(candidate[i + 1])
+                i += 2
+            else:
+                i += 1
+            continue
+
+        result.append(char)
+        i += 1
+
+    return "".join(result)
+
+
+def _starts_latex_command(candidate: str, start_index: int) -> bool:
+    remaining = candidate[start_index:]
+    return any(
+        remaining.startswith(command)
+        for command in _LATEX_JSON_COMMAND_PREFIXES
+    )
 
 
 def _escape_invalid_json_backslashes(candidate: str) -> str:

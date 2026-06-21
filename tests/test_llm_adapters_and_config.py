@@ -11,6 +11,7 @@ from lecture_auto.llm_adapter import (
     GeminiLLMAdapter,
     LLMConfigError,
     _apply_thinking_config,
+    _extract_json_object,
 )
 
 def test_llm_config_validation_fails_without_api_key() -> None:
@@ -176,6 +177,14 @@ def test_gemini_notes_use_chunk_merge_for_long_transcripts() -> None:
     assert any("Chunk: 1 of" in content for content in contents)
     assert "Merge these chunk-level lecture-note JSON objects" in contents[-1]
     assert "### Breadth-First Search Mechanics" in notes
+
+
+def test_extract_json_object_preserves_latex_commands_that_look_like_json_escapes() -> None:
+    parsed = _extract_json_object(
+        r'{"items":["$t \rightarrow \theta \beta \frac{1}{2} \nabla$"]}'
+    )
+
+    assert parsed["items"][0] == r"$t \rightarrow \theta \beta \frac{1}{2} \nabla$"
 
 
 def test_model_name_normalization_maps_gemini_3_0_alias() -> None:
