@@ -21,6 +21,8 @@
 
 설치와 provider 설정 세부 내용은 [setup.ko.md](setup.ko.md)를 참고한다.
 
+사전 요구사항: `pip install -e .`를 실행하기 전에 Rust를 설치해야 한다. 일부 Python dependency가 native extension을 빌드하면서 Rust toolchain을 요구한다. [rustup.rs](https://rustup.rs/)에서 설치한 뒤, `cargo`가 `PATH`에서 잡히도록 터미널을 다시 연다.
+
 ```bash
 git clone https://github.com/fullsack73/auto_lecture_notes.git
 cd auto_lecture_notes

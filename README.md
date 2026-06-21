@@ -23,6 +23,8 @@ Notes always use the `structured-notes` format. With Ollama, the model does not 
 
 Detailed installation and provider setup live in [docs/setup.md](docs/setup.md). Korean setup docs are available at [docs/setup.ko.md](docs/setup.ko.md).
 
+Prerequisite: install Rust before running `pip install -e .`. Some Python dependencies build native extensions and require the Rust toolchain. Install it from [rustup.rs](https://rustup.rs/), then restart your terminal so `cargo` is available on `PATH`.
+
 ```bash
 git clone https://github.com/fullsack73/auto_lecture_notes.git
 cd auto_lecture_notes
