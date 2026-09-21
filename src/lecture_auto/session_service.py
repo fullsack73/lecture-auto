@@ -489,6 +489,7 @@ class SessionService:
     def refine_audio_volume(self, session_id: str) -> CommandResult:
         """Apply audio volume refinement (dynaudnorm) to the session's audio recording."""
         session = self._require_session(session_id)
+        self._require_finalized_audio(session)
         if session["audio_file_path"] is None:
             raise SessionCommandError(
                 code="REFINE_AUDIO_NO_SOURCE",
@@ -571,6 +572,7 @@ class SessionService:
     ) -> CommandResult:
         """Apply noise reduction (deepFilter) to the session's audio recording."""
         session = self._require_session(session_id)
+        self._require_finalized_audio(session)
         if session["audio_file_path"] is None:
             raise SessionCommandError(
                 code="REFINE_AUDIO_NO_SOURCE",
@@ -679,6 +681,7 @@ class SessionService:
         allow_failed_retry: bool = False,
     ) -> CommandResult:
         session = self._require_session(session_id)
+        self._require_finalized_audio(session)
         normalized_source_path = self._normalize_source_path(source_audio_path)
         extension = self._require_supported_import_extension(normalized_source_path)
         self._reject_duplicate_import(
@@ -984,6 +987,7 @@ class SessionService:
         token = cancellation_token or CancellationToken()
         token.raise_if_cancelled()
         session = self._require_session(session_id)
+        self._require_finalized_audio(session)
         if source_audio_path is not None:
             raise SessionCommandError(
                 code="TRANSCRIPTION_SESSION_AUDIO_ONLY",
@@ -1317,6 +1321,16 @@ class SessionService:
                 exit_code=1,
             )
         return suffix
+
+    @staticmethod
+    def _require_finalized_audio(session: dict[str, Any]) -> None:
+        if session.get("status") in {"recording", "stopping"}:
+            raise SessionCommandError(
+                code="AUDIO_CAPTURE_ACTIVE",
+                message="Audio processing is unavailable while this session is recording.",
+                guidance="Stop the recording, then retry the audio operation.",
+                exit_code=1,
+            )
 
     def _reject_duplicate_import(
         self,
@@ -1796,8 +1810,8 @@ class SessionService:
                     job_id=job_id,
                     session_id=session_id,
                     stage=stage,
-                    completed=int(completed) if isinstance(completed, int) else None,
-                    total=int(total) if isinstance(total, int) else None,
+                    completed=completed if isinstance(completed, (int, float)) else None,
+                    total=total if isinstance(total, (int, float)) else None,
                     message=message,
                 )
             return WorkerWhisperSTTRuntimeAdapter(

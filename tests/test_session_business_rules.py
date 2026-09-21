@@ -4,6 +4,7 @@ import pytest
 
 from lecture_auto.session_metadata_store import SessionMetadataStore
 from lecture_auto.session_service import SessionCommandError, SessionService
+from lecture_auto.stt_config import STTConfig
 
 
 def _service(tmp_path: Path) -> SessionService:
@@ -80,6 +81,19 @@ def test_rerecording_completed_session_persists_recording_status(tmp_path: Path)
 
     assert start_result.payload["status"] == "recording"
     assert detail_result.payload["status"] == "recording"
+
+
+def test_audio_processing_rejects_unfinalized_recording(tmp_path: Path) -> None:
+    store = SessionMetadataStore(tmp_path / "config" / "sessions.json")
+    service = SessionService(store, stt_config=STTConfig(use_dynaudnorm=True))
+    service.session_create("session-active", "2026-03-07")
+    service.capture_start("session-active")
+
+    with pytest.raises(SessionCommandError) as exc:
+        service.refine_audio_volume("session-active")
+
+    assert exc.value.code == "AUDIO_CAPTURE_ACTIVE"
+    assert "Stop the recording" in exc.value.guidance
 
 
 def test_create_without_title_or_course_marks_naming_pending(tmp_path: Path) -> None:

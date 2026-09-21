@@ -6,9 +6,15 @@ from scripts.project_version import read_project_version
 def test_release_builders_use_pyproject_version() -> None:
     root = Path(__file__).resolve().parents[1]
 
-    assert read_project_version(root) == "0.1.7"
+    assert read_project_version(root) == "0.1.8"
     assert '--macos-app-version="$APP_VERSION"' in (
         root / "scripts" / "build_macos_app.sh"
+    ).read_text()
+    assert "--include-distribution-metadata=lecture-auto" in (
+        root / "scripts" / "build_macos_app.sh"
+    ).read_text()
+    assert '"--include-distribution-metadata=lecture-auto"' in (
+        root / "scripts" / "build_desktop_app.py"
     ).read_text()
     assert "sys.version_info[:2] == (3, 11)" in (
         root / "scripts" / "build_macos_app.sh"

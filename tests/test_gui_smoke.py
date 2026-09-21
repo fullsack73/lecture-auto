@@ -20,8 +20,9 @@ from PySide6.QtWidgets import (
 
 from lecture_auto.application import AppConfig, ConfigRepository
 from lecture_auto.capture_runtime import AudioDevice, NoopCaptureRuntimeAdapter
-from lecture_auto.gui.app import APP_STYLE, MainWindow
+from lecture_auto.gui.app import APP_STYLE, APP_VERSION, SESSION_PROGRESS_ROLE, MainWindow
 from lecture_auto.local_runtime import RuntimeStatus
+from lecture_auto.tasking import TaskEvent
 
 
 class MemorySecrets:
@@ -54,6 +55,14 @@ def test_table_style_avoids_macos_header_corner_artifact() -> None:
     assert "QHeaderView::section:first" not in APP_STYLE
 
 
+def test_sidebar_shows_application_version(tmp_path: Path, qtbot) -> None:
+    window = make_window(tmp_path, qtbot)
+
+    label = window.findChild(QLabel, "SidebarVersion")
+    assert label is not None
+    assert label.text() == f"v{APP_VERSION}"
+
+
 def test_main_window_navigates_and_shows_created_session(tmp_path: Path, qtbot) -> None:
     window = make_window(tmp_path, qtbot)
     window.container.session.session_create("week-01", "2026-07-12", "Intro", "CS101")
@@ -83,6 +92,20 @@ def test_session_transcript_preview_prefers_refined_version(tmp_path: Path, qtbo
     window.sessions_page.select_session("week-01")
 
     assert window.sessions_page.transcript_view.toPlainText() == "refined version"
+
+
+def test_transcription_progress_fills_matching_session_row(tmp_path: Path, qtbot) -> None:
+    window = make_window(tmp_path, qtbot)
+    window.container.session.session_create("week-01", "2026-07-12", "Intro", "CS101")
+    window.sessions_page.refresh()
+    window._job_labels["job-1"] = "전사"
+    window._job_sessions["job-1"] = "week-01"
+
+    window._job_progress(TaskEvent("job-1", "week-01", "transcribing", 30.0, 120.0))
+
+    item = window.sessions_page.list.item(0)
+    assert item.data(SESSION_PROGRESS_ROLE) == 31
+    assert "전사 중 · 31%" in item.text()
 
 
 def test_command_feedback_does_not_create_bottom_status_bar(tmp_path: Path, qtbot) -> None:
@@ -150,9 +173,18 @@ def test_recording_session_shows_live_microphone_level(tmp_path: Path, qtbot) ->
     window.sessions_page._refresh_capture_level()
 
     try:
+        buttons = {
+            button.text().replace("  →", ""): button
+            for button in window.sessions_page.action_buttons
+        }
         assert not window.sessions_page.capture_meter_row.isHidden()
         assert window.sessions_page.capture_meter.value() == 42
         assert window.sessions_page.capture_level_label.text() == "-18.5 dBFS"
+        assert buttons["녹음 중지"].isEnabled()
+        assert all(
+            not buttons[label].isEnabled()
+            for label in ("녹음 시작", "오디오 파일 가져오기", "볼륨 보정", "노이즈 제거", "전사 시작")
+        )
     finally:
         window.container.session.capture_stop("week-01")
 

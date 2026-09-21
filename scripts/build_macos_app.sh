@@ -80,6 +80,7 @@ rm -rf "$BUILD_DIR/app.build" "$BUILD_DIR/app.dist" "$BUILD_DIR/app.app" \
 "$PYTHON" -m nuitka "$SOURCE" \
   --enable-plugin=pyside6 \
   --standalone \
+  --include-distribution-metadata=lecture-auto \
   --macos-create-app-bundle \
   --macos-target-arch=arm64 \
   --macos-app-name="Lecture Auto" \

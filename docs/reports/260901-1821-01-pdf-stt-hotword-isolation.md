@@ -29,6 +29,10 @@
 - `.venv/bin/pytest -q tests/test_stt_gap_analysis.py tests/test_local_stt_optimization_phase2.py tests/test_local_worker_adapter.py tests/test_local_ai_worker.py`: 27 passed
 - `PYTHONPATH=. .venv/bin/pytest -q`: 340 passed, 1 skipped, 2 warnings
 - `git diff --check`: 통과
+- Python 3.11.15 ARM64로 v0.1.7 macOS 앱 빌드 및 경량 import/GUI smoke test 통과
+- `/Applications/Lecture Auto.app` 설치 후 deep code-sign 검증 통과
+- 빌드본과 설치본 실행 파일 SHA-256 일치:
+  `11e949b56dbc74df4df1787327fcdb75ec9263641bc51c7f0dcd2c035596c493`
 
 ## 리스크/이슈
 

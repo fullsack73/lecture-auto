@@ -14,8 +14,8 @@ class TaskEvent:
     job_id: str
     session_id: str | None
     stage: str
-    completed: int | None = None
-    total: int | None = None
+    completed: int | float | None = None
+    total: int | float | None = None
     message: str = ""
 
 

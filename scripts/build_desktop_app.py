@@ -81,6 +81,7 @@ def build(platform_name: str | None = None, *, smoke_test: bool = True) -> Path:
         str(source),
         "--enable-plugin=pyside6",
         "--standalone",
+        "--include-distribution-metadata=lecture-auto",
         f"--output-dir={build_dir}",
         "--output-filename=LectureAuto",
         "--output-folder-name=LectureAuto",

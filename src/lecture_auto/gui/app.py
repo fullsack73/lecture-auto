@@ -4,11 +4,12 @@ import json
 import os
 import sys
 from datetime import date
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any, Callable
 
 from PySide6.QtCore import QDate, Qt, QTimer, Slot
-from PySide6.QtGui import QAction, QCloseEvent, QDesktopServices, QIcon
+from PySide6.QtGui import QAction, QCloseEvent, QColor, QDesktopServices, QIcon, QPainter
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QAbstractSpinBox,
@@ -39,6 +40,7 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSpinBox,
     QStackedWidget,
+    QStyledItemDelegate,
     QTableWidget,
     QTableWidgetItem,
     QTabWidget,
@@ -68,6 +70,24 @@ from lecture_auto.stt_config import (
 from lecture_auto.tasking import TaskCancelledError, TaskEvent
 
 
+try:
+    APP_VERSION = version("lecture-auto")
+except PackageNotFoundError:
+    APP_VERSION = "dev"
+
+SESSION_PROGRESS_ROLE = Qt.UserRole + 1
+
+
+class SessionProgressDelegate(QStyledItemDelegate):
+    def paint(self, painter: QPainter, option: Any, index: Any) -> None:
+        super().paint(painter, option, index)
+        progress = index.data(SESSION_PROGRESS_ROLE)
+        if progress is None:
+            return
+        fill = option.rect.adjusted(0, 0, -round(option.rect.width() * (100 - progress) / 100), 0)
+        painter.fillRect(fill, QColor(30, 150, 92, 80))
+
+
 APP_STYLE = """
 * {
     font-family: "Pretendard Variable", "Apple SD Gothic Neo";
@@ -83,6 +103,11 @@ QLabel#BrandMark {
     font-weight: 800;
     letter-spacing: -0.4px;
     padding: 2px 4px;
+}
+QLabel#SidebarVersion {
+    color: #71857a;
+    font-size: 11px;
+    padding: 0 4px;
 }
 QLabel#BrandCaption {
     color: #8fa198;
@@ -635,7 +660,9 @@ class SessionsPage(QWidget):
         self.list.setObjectName("SessionList")
         self.list.setMinimumWidth(280)
         self.list.setAlternatingRowColors(True)
+        self.list.setItemDelegate(SessionProgressDelegate(self.list))
         self.list.currentItemChanged.connect(self._selection_changed)
+        self._transcription_progress: dict[str, int] = {}
         content.addWidget(self.list, 1)
         detail = QFrame()
         detail.setObjectName("DetailPanel")
@@ -715,8 +742,10 @@ class SessionsPage(QWidget):
         )
         capture_row = QHBoxLayout()
         capture_row.setSpacing(7)
-        capture_row.addWidget(action_button("녹음 시작", self.capture_start, "WorkflowPrimary"))
-        capture_row.addWidget(action_button("녹음 중지", self.capture_stop))
+        self.capture_start_button = action_button("녹음 시작", self.capture_start, "WorkflowPrimary")
+        self.capture_stop_button = action_button("녹음 중지", self.capture_stop)
+        capture_row.addWidget(self.capture_start_button)
+        capture_row.addWidget(self.capture_stop_button)
         audio_layout.addLayout(capture_row)
         self.capture_meter_row = QFrame()
         meter_layout = QHBoxLayout(self.capture_meter_row)
@@ -736,11 +765,14 @@ class SessionsPage(QWidget):
         self.capture_level_timer.setInterval(100)
         self.capture_level_timer.timeout.connect(self._refresh_capture_level)
         self.capture_meter_row.hide()
-        audio_layout.addWidget(action_button("오디오 파일 가져오기", self.import_audio))
+        self.import_audio_button = action_button("오디오 파일 가져오기", self.import_audio)
+        audio_layout.addWidget(self.import_audio_button)
         refine_row = QHBoxLayout()
         refine_row.setSpacing(7)
-        refine_row.addWidget(action_button("볼륨 보정", self.refine_volume))
-        refine_row.addWidget(action_button("노이즈 제거", self.refine_noise))
+        self.refine_volume_button = action_button("볼륨 보정", self.refine_volume)
+        self.refine_noise_button = action_button("노이즈 제거", self.refine_noise)
+        refine_row.addWidget(self.refine_volume_button)
+        refine_row.addWidget(self.refine_noise_button)
         audio_layout.addLayout(refine_row)
         audio_layout.addStretch()
         audio_layout.addWidget(
@@ -761,9 +793,8 @@ class SessionsPage(QWidget):
             "전사",
             "음성을 글로 옮긴 뒤 문장과 용어를 다듬습니다.",
         )
-        transcript_layout.addWidget(
-            action_button("전사 시작", self.transcribe, "WorkflowAccent")
-        )
+        self.transcribe_button = action_button("전사 시작", self.transcribe, "WorkflowAccent")
+        transcript_layout.addWidget(self.transcribe_button)
         transcript_layout.addWidget(action_button("전사문 다듬기", self.refine_transcript))
         transcript_layout.addStretch()
         transcript_layout.addWidget(
@@ -821,12 +852,15 @@ class SessionsPage(QWidget):
         self.list.clear()
         selected_item = None
         for row in rows:
+            progress = self._transcription_progress.get(row["session_id"])
             text = (
                 f"{row['date']}  {row.get('title') or row['session_id']}\n"
-                f"{row.get('course') or '과목 없음'} · {format_status(row.get('status'))}"
+                f"{row.get('course') or '과목 없음'} · "
+                f"{'전사 중 · ' + str(progress) + '%' if progress is not None else format_status(row.get('status'))}"
             )
             item = QListWidgetItem(text)
             item.setData(Qt.UserRole, row["session_id"])
+            item.setData(SESSION_PROGRESS_ROLE, progress)
             self.list.addItem(item)
             if row["session_id"] == selected:
                 selected_item = item
@@ -842,13 +876,34 @@ class SessionsPage(QWidget):
         self.current_session_id = session_id
         self.refresh()
 
+    def set_transcription_progress(self, session_id: str, progress: int | None) -> None:
+        if progress is None:
+            self._transcription_progress.pop(session_id, None)
+            self.refresh()
+            return
+        progress = max(
+            self._transcription_progress.get(session_id, 0),
+            min(100, max(0, progress)),
+        )
+        self._transcription_progress[session_id] = progress
+        for row in range(self.list.count()):
+            item = self.list.item(row)
+            if item.data(Qt.UserRole) != session_id:
+                continue
+            first, second = item.text().split("\n", 1)
+            course = second.split(" · ", 1)[0]
+            item.setText(f"{first}\n{course} · 전사 중 · {progress}%")
+            item.setData(SESSION_PROGRESS_ROLE, progress)
+            self.list.viewport().update(self.list.visualItemRect(item))
+            break
+
     def _selection_changed(self, current: QListWidgetItem | None, _previous: QListWidgetItem | None) -> None:
         self._show_session(str(current.data(Qt.UserRole)) if current else None)
 
     def _show_session(self, session_id: str | None) -> None:
         self.current_session_id = session_id
-        self._set_actions_enabled(bool(session_id))
         if not session_id:
+            self._set_actions_enabled(False)
             self._set_capture_meter_active(False)
             self.detail_title.setText("세션을 선택하세요")
             self.detail_meta.setText("왼쪽 목록에서 세션을 선택하면 작업 도구와 결과물을 확인할 수 있습니다.")
@@ -858,6 +913,7 @@ class SessionsPage(QWidget):
             self.tabs.setEnabled(False)
             return
         session = self.window.container.session.session_detail(session_id).payload
+        self._set_actions_enabled(True, recording=session.get("status") in {"recording", "stopping"})
         self._set_capture_meter_active(session.get("status") == "recording")
         self.tabs.setEnabled(True)
         self.detail_title.setText(str(session.get("title") or session_id))
@@ -887,9 +943,19 @@ class SessionsPage(QWidget):
         else:
             view.setPlainText("파일 없음")
 
-    def _set_actions_enabled(self, enabled: bool) -> None:
+    def _set_actions_enabled(self, enabled: bool, *, recording: bool = False) -> None:
         for button in self.action_buttons:
             button.setEnabled(enabled)
+        if enabled:
+            self.capture_start_button.setEnabled(not recording)
+            self.capture_stop_button.setEnabled(recording)
+            for button in (
+                self.import_audio_button,
+                self.refine_volume_button,
+                self.refine_noise_button,
+                self.transcribe_button,
+            ):
+                button.setEnabled(not recording)
 
     def _require_id(self) -> str:
         if not self.current_session_id:
@@ -1803,6 +1869,7 @@ class MainWindow(QMainWindow):
         self.jobs.active_changed.connect(self._active_changed)
         self._job_items: dict[str, QListWidgetItem] = {}
         self._job_labels: dict[str, str] = {}
+        self._job_sessions: dict[str, str | None] = {}
         self.setWindowTitle("Lecture Auto")
         self.resize(1280, 820)
         self._build_ui()
@@ -1834,6 +1901,9 @@ class MainWindow(QMainWindow):
             side_layout.addWidget(button)
             self.nav_buttons.append(button)
         side_layout.addStretch()
+        version_label = QLabel(f"v{APP_VERSION}")
+        version_label.setObjectName("SidebarVersion")
+        side_layout.addWidget(version_label)
         root_layout.addWidget(sidebar)
         main = QVBoxLayout()
         main.setContentsMargins(34, 28, 34, 20)
@@ -1928,6 +1998,7 @@ class MainWindow(QMainWindow):
                 block_close=block_close,
             )
             self._job_labels[job_id] = label
+            self._job_sessions[job_id] = session_id
             item = QListWidgetItem(f"{label}: 대기 중")
             item.setData(Qt.UserRole, job_id)
             self.task_list.insertItem(0, item)
@@ -1942,16 +2013,25 @@ class MainWindow(QMainWindow):
         label = self._job_labels.get(event.job_id, event.job_id)
         if item:
             item.setText(f"{label}: {event.message or event.stage}")
+        session_id = event.session_id or self._job_sessions.get(event.job_id)
+        if label == "전사" and session_id:
+            self.sessions_page.set_transcription_progress(
+                session_id,
+                transcription_progress_percent(event),
+            )
         if event.total and event.completed is not None:
             self.task_progress.setVisible(True)
-            self.task_progress.setRange(0, event.total)
-            self.task_progress.setValue(event.completed)
+            self.task_progress.setRange(0, round(event.total))
+            self.task_progress.setValue(round(event.completed))
         else:
             self.task_progress.setRange(0, 0)
 
     @Slot(str, object)
     def _job_success(self, job_id: str, result: object) -> None:
         label = self._job_labels.get(job_id, job_id)
+        session_id = self._job_sessions.pop(job_id, None)
+        if label == "전사" and session_id:
+            self.sessions_page.set_transcription_progress(session_id, None)
         item = self._job_items.get(job_id)
         message = result.message if isinstance(result, CommandResult) else str(result or "완료")
         if item:
@@ -2024,6 +2104,9 @@ class MainWindow(QMainWindow):
     @Slot(str, object)
     def _job_failure(self, job_id: str, error: object) -> None:
         label = self._job_labels.get(job_id, job_id)
+        session_id = self._job_sessions.pop(job_id, None)
+        if label == "전사" and session_id:
+            self.sessions_page.set_transcription_progress(session_id, None)
         item = self._job_items.get(job_id)
         if item:
             item.setText(f"{label}: 실패 · {error}")
@@ -2168,6 +2251,26 @@ def format_status(value: object) -> str:
     }.get(raw, raw or "-")
 
 
+def transcription_progress_percent(event: TaskEvent) -> int:
+    if event.stage == "file_write_complete":
+        return 100
+    if event.stage == "preflight_checks":
+        return 0
+    if event.stage in {"mode_provider_initialization", "loading_model"}:
+        return 5
+    if event.stage == "transcription_in_progress":
+        return 10
+    if event.stage == "transcribing" and event.total and event.completed is not None:
+        return 10 + round(85 * event.completed / event.total)
+    if event.stage == "quality_retry" and event.total and event.completed is not None:
+        return 95 + round(4 * event.completed / event.total)
+    if event.stage == "complete":
+        return 99
+    if event.total and event.completed is not None:
+        return round(100 * event.completed / event.total)
+    return 0
+
+
 def fill_session_table(table: QTableWidget, rows: list[dict[str, Any]]) -> None:
     sorting_enabled = table.isSortingEnabled()
     header = table.horizontalHeader()
@@ -2190,6 +2293,7 @@ def fill_session_table(table: QTableWidget, rows: list[dict[str, Any]]) -> None:
 def main() -> None:
     application = QApplication(sys.argv)
     application.setApplicationName("Lecture Auto")
+    application.setApplicationVersion(APP_VERSION)
     application.setOrganizationName("Lecture Auto")
     icon_path = Path(__file__).resolve().parent / "assets" / "app-icon.png"
     if icon_path.exists():
