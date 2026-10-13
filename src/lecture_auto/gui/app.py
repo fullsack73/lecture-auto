@@ -1616,10 +1616,23 @@ class SettingsPage(QWidget):
             self.stt_key.clear(); self.stt_key.setPlaceholderText("저장됨" if cfg.stt.api_key else "")
             self.llm_key.clear(); self.llm_key.setPlaceholderText("저장됨" if cfg.llm.api_key else "")
             self._sync_provider_fields()
-            self.refresh_devices()
+            if self.window.jobs.active_count == 0:
+                self.refresh_devices()
+            else:
+                self.devices.clear()
+                if cfg.capture_device_id or cfg.capture_device_name:
+                    device = AudioDevice(
+                        cfg.capture_device_id or cfg.capture_device_name or "",
+                        cfg.capture_device_name or cfg.capture_device_id or "",
+                        cfg.capture_source,
+                        cfg.capture_backend or "",
+                    )
+                    self.devices.addItem(device.name, device)
+                else:
+                    self.devices.addItem("작업 완료 후 확인", None)
         finally:
             self._loading = False
-        if not self._runtime_probe_requested:
+        if not self._runtime_probe_requested and self.window.jobs.active_count == 0:
             self._runtime_probe_requested = True
             QTimer.singleShot(0, self.probe_runtime)
 
@@ -1742,6 +1755,8 @@ class SettingsPage(QWidget):
                 self.workspace.setText(previous)
 
     def refresh_devices(self) -> None:
+        if self.window.jobs.active_count:
+            return
         self.devices.clear()
         try:
             runtime = self.window.container.session.runtime_adapter
@@ -1870,6 +1885,7 @@ class MainWindow(QMainWindow):
         self._job_items: dict[str, QListWidgetItem] = {}
         self._job_labels: dict[str, str] = {}
         self._job_sessions: dict[str, str | None] = {}
+        self._pending_service_config: AppConfig | None = None
         self.setWindowTitle("Lecture Auto")
         self.resize(1280, 820)
         self._build_ui()
@@ -2121,6 +2137,12 @@ class MainWindow(QMainWindow):
         if not count:
             self.task_progress.setRange(0, 1)
             self.task_progress.setValue(1)
+            if self._pending_service_config is not None:
+                config = self._pending_service_config
+                self._pending_service_config = None
+                self.reload_services(config)
+            elif self.stack.currentWidget() is self.settings_page:
+                self.settings_page.refresh()
 
     def show_status_message(self, message: str, timeout: int = 5000) -> None:
         """Show transient feedback in the task tray without creating a status bar."""
@@ -2144,10 +2166,13 @@ class MainWindow(QMainWindow):
         QMessageBox.critical(self, "오류", text)
 
     def reload_services(self, config: AppConfig) -> None:
-        self.container.runtime.close()
         self.config = config
-        self.container = build_service_container(config)
         self.translator = Translator(config.ui_language)
+        if self.jobs.active_count:
+            self._pending_service_config = config
+            return
+        self.container.runtime.close()
+        self.container = build_service_container(config)
         self.refresh_all()
 
     def refresh_all(self) -> None:
@@ -2252,21 +2277,9 @@ def format_status(value: object) -> str:
 
 
 def transcription_progress_percent(event: TaskEvent) -> int:
-    if event.stage == "file_write_complete":
+    if event.stage in {"file_write_complete", "quality_retry", "complete"}:
         return 100
-    if event.stage == "preflight_checks":
-        return 0
-    if event.stage in {"mode_provider_initialization", "loading_model"}:
-        return 5
-    if event.stage == "transcription_in_progress":
-        return 10
     if event.stage == "transcribing" and event.total and event.completed is not None:
-        return 10 + round(85 * event.completed / event.total)
-    if event.stage == "quality_retry" and event.total and event.completed is not None:
-        return 95 + round(4 * event.completed / event.total)
-    if event.stage == "complete":
-        return 99
-    if event.total and event.completed is not None:
         return round(100 * event.completed / event.total)
     return 0
 

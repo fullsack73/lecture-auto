@@ -24,6 +24,7 @@ def test_package_probe_treats_missing_parent_module_as_not_found(monkeypatch) ->
 
 def test_whisper_forces_cpu_device(monkeypatch, tmp_path) -> None:
     created: dict[str, object] = {}
+    progress_events: list[dict[str, object]] = []
 
     class FakeWhisperModel:
         def __init__(self, model_source, **kwargs) -> None:
@@ -40,6 +41,13 @@ def test_whisper_forces_cpu_device(monkeypatch, tmp_path) -> None:
         "faster_whisper",
         SimpleNamespace(WhisperModel=FakeWhisperModel),
     )
+    monkeypatch.setattr(
+        worker,
+        "emit",
+        lambda event_type, **payload: progress_events.append(
+            {"type": event_type, **payload}
+        ),
+    )
 
     result = worker.whisper(
         {
@@ -51,6 +59,13 @@ def test_whisper_forces_cpu_device(monkeypatch, tmp_path) -> None:
 
     assert created["kwargs"] == {"device": "cpu", "compute_type": "int8"}
     assert result["transcript_text"] == "hello"
+    transcribing = [
+        event for event in progress_events if event.get("stage") == "transcribing"
+    ]
+    assert transcribing[0]["completed"] == 0
+    assert transcribing[0]["total"] is None
+    assert transcribing[1]["completed"] == 0.5
+    assert transcribing[1]["total"] == 0.5
 
 
 def test_whisper_uses_auto_cuda_batch_vad_and_preserves_confidence(

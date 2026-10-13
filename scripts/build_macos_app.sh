@@ -56,6 +56,7 @@ if ! "$PYTHON" -c 'import sys; raise SystemExit(0 if sys.version_info[:2] == (3,
   exit 2
 fi
 
+"$UV" pip install --python "$PYTHON" --no-deps --editable "$ROOT"
 APP_VERSION="$("$PYTHON" "$ROOT/scripts/project_version.py")"
 
 if [[ "${1:-}" == "--install" ]]; then

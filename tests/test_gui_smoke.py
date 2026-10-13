@@ -104,8 +104,8 @@ def test_transcription_progress_fills_matching_session_row(tmp_path: Path, qtbot
     window._job_progress(TaskEvent("job-1", "week-01", "transcribing", 30.0, 120.0))
 
     item = window.sessions_page.list.item(0)
-    assert item.data(SESSION_PROGRESS_ROLE) == 31
-    assert "전사 중 · 31%" in item.text()
+    assert item.data(SESSION_PROGRESS_ROLE) == 25
+    assert "전사 중 · 25%" in item.text()
 
 
 def test_command_feedback_does_not_create_bottom_status_bar(tmp_path: Path, qtbot) -> None:
@@ -455,6 +455,70 @@ def test_settings_changes_apply_automatically(tmp_path: Path, qtbot) -> None:
     assert "설정 저장" not in {
         button.text() for button in page.findChildren(QPushButton)
     }
+
+
+def test_settings_waits_for_active_transcription_before_touching_runtime(
+    tmp_path: Path, qtbot
+) -> None:
+    window = make_window(tmp_path, qtbot)
+    window.config.capture_source = "system_audio"
+    started = Event()
+    release = Event()
+
+    def transcribe(_token, _progress, _job):
+        started.set()
+        release.wait(3)
+
+    with (
+        patch.object(window.container.runtime, "probe", wraps=window.container.runtime.probe) as probe,
+        patch.object(
+            window.container.session.runtime_adapter,
+            "list_devices",
+            wraps=window.container.session.runtime_adapter.list_devices,
+        ) as list_devices,
+    ):
+        window.run_background("전사", "week-01", transcribe)
+        qtbot.waitUntil(started.is_set, timeout=3000)
+
+        window.show_page(3)
+
+        probe.assert_not_called()
+        list_devices.assert_not_called()
+        release.set()
+        qtbot.waitUntil(lambda: window.jobs.active_count == 0, timeout=3000)
+        qtbot.waitUntil(lambda: probe.call_count == 1, timeout=3000)
+        qtbot.waitUntil(lambda: window.jobs.active_count == 0, timeout=3000)
+        assert list_devices.call_count >= 1
+
+
+def test_settings_save_defers_service_reload_until_transcription_finishes(
+    tmp_path: Path, qtbot
+) -> None:
+    window = make_window(tmp_path, qtbot)
+    page = window.settings_page
+    page._runtime_probe_requested = True
+    started = Event()
+    release = Event()
+    runtime = window.container.runtime
+
+    def transcribe(_token, _progress, _job):
+        started.set()
+        release.wait(3)
+
+    with patch.object(runtime, "close", wraps=runtime.close) as close:
+        window.run_background("전사", "week-01", transcribe)
+        qtbot.waitUntil(started.is_set, timeout=3000)
+        window.show_page(3)
+        page.audio_format.setCurrentIndex(page.audio_format.findData("mp3"))
+        qtbot.waitUntil(lambda: window.config.audio_format == "mp3", timeout=2000)
+
+        close.assert_not_called()
+        assert window.container.runtime is runtime
+
+        release.set()
+        qtbot.waitUntil(lambda: window.jobs.active_count == 0, timeout=3000)
+        assert close.call_count == 1
+        assert window.container.runtime is not runtime
 
 
 def test_workspace_picker_applies_immediately_and_persists(tmp_path: Path, qtbot, monkeypatch) -> None:

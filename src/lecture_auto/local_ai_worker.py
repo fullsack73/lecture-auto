@@ -222,8 +222,8 @@ def whisper(request: dict[str, Any]) -> dict[str, Any]:
     emit(
         "progress",
         stage="transcribing",
-        completed=1,
-        total=3,
+        completed=0,
+        total=None,
         message="Transcribing audio (warm model)" if warm_start else "Transcribing audio",
     )
     transcribe_kwargs: dict[str, Any] = {}
@@ -305,6 +305,14 @@ def whisper(request: dict[str, Any]) -> dict[str, Any]:
                     completed=float(segment.end),
                     total=duration or None,
                     message=f"Transcribed {float(segment.end):.1f}s",
+                )
+            if duration > 0:
+                emit(
+                    "progress",
+                    stage="transcribing",
+                    completed=duration,
+                    total=duration,
+                    message=f"Transcribed {duration:.1f}s",
                 )
             break
         except RuntimeError as exc:
