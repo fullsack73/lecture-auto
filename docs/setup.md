@@ -383,4 +383,4 @@ For system audio recording, also check your loopback device setup.
 
 ### PPT/PPTX Material Import Fails
 
-PPT/PPTX conversion may require LibreOffice. For the simplest path, convert slides to PDF first and import the PDF.
+PPT/PPTX conversion requires LibreOffice. Install it in the user runtime from Settings add-ons or run `lecture-auto runtime install --feature libreoffice`. Windows and Linux support x86-64 and ARM64; installation on Linux requires Python 3.11.4 or later. Standard LibreOffice does not support modern HWP/HWPX conversion.

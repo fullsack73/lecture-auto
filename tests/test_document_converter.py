@@ -3,6 +3,7 @@ Tests for document_converter module.
 """
 import tempfile
 from pathlib import Path
+from unittest.mock import Mock
 
 import pytest
 
@@ -66,6 +67,27 @@ class TestConvertToPDF:
         result = convert_to_pdf(str(source_doc), str(output_pdf))
         
         assert result == "unsupported"
+
+    def test_conversion_uses_managed_libreoffice_and_temporary_output(self, tmp_path, monkeypatch):
+        source = tmp_path / "presentation.pptx"
+        source.write_bytes(b"fake pptx")
+        output = tmp_path / "output.pdf"
+        monkeypatch.setattr(
+            "lecture_auto.libreoffice_runtime.find_libreoffice",
+            lambda: "/managed/soffice",
+        )
+
+        def fake_run(command, **_kwargs):
+            output_dir = Path(command[command.index("--outdir") + 1])
+            assert command[0] == "/managed/soffice"
+            assert output_dir != source.parent
+            (output_dir / "presentation.pdf").write_bytes(b"converted")
+            return Mock(returncode=0, stderr="")
+
+        monkeypatch.setattr("subprocess.run", fake_run)
+
+        assert convert_to_pdf(str(source), str(output)) == "converted"
+        assert output.read_bytes() == b"converted"
 
 
 class TestPPTXConversion:

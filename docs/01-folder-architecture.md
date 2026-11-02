@@ -62,6 +62,9 @@ src/lecture_auto/
 ├─ local_worker_adapter.py       # local worker adapter
 ├─ model_manager.py              # local 모델 관리
 ├─ document_converter.py         # PDF/PPT/PPTX 자료 변환
+├─ libreoffice_runtime.py        # LibreOffice 탐색 및 관리형 설치 진입점
+├─ libreoffice_linux.py          # Linux 관리형 LibreOffice 설치
+├─ libreoffice_windows.py        # Windows 관리형 LibreOffice 설치
 ├─ tasking.py                    # 작업 실행/상태 보조
 ├─ cli_output.py                 # 텍스트/JSON CLI 출력 포맷
 └─ templates/structured-notes.md # 기본 구조화 노트 형식

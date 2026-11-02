@@ -40,7 +40,7 @@ PySide6 기반으로 같은 workspace와 세션 데이터를 공유한다. 세�
 
 - session ID, 날짜, 제목, course를 가진 세션 생성/수정/삭제
 - 세션별 metadata와 상태 관리
-- PDF/PPT/PPTX 수업 자료 import; PPT/PPTX는 가능한 경우 PDF로 변환
+- PDF/PPT/PPTX 수업 자료 import; PPT/PPTX는 LibreOffice로 PDF 변환. 설정에서 LibreOffice를 별도 설치 가능
 
 ### 녹음과 오디오
 

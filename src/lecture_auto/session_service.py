@@ -813,7 +813,7 @@ class SessionService:
             raise SessionCommandError(
                 code="IMPORT_MATERIAL_CONVERSION_ERROR",
                 message=str(exc),
-                guidance="Check if required libraries are installed: pip install python-pptx reportlab pillow",
+                guidance="Install the LibreOffice add-on in Settings > Add-ons and try again.",
                 exit_code=1,
             )
         except OSError as exc:

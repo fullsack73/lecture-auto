@@ -410,4 +410,4 @@ ffmpeg -version
 
 ### PPT/PPTX material import fails
 
-PPT/PPTX 변환에는 LibreOffice가 필요할 수 있다. 안정성이 필요하면 PDF로 변환한 뒤 import하는 것이 가장 단순하다.
+PPT/PPTX 변환에는 LibreOffice가 필요하다. 설정의 애드온에서 LibreOffice를 선택하거나 `lecture-auto runtime install --feature libreoffice`를 실행해 사용자 runtime에 설치할 수 있다. Windows와 Linux는 x86-64 및 ARM64를 지원하며 Linux 설치에는 Python 3.11.4 이상이 필요하다. 기본 LibreOffice는 최신 HWP/HWPX 변환을 지원하지 않는다.

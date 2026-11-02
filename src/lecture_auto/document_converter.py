@@ -5,7 +5,6 @@ Supports converting various document formats (PPT, PPTX) to PDF.
 """
 from __future__ import annotations
 
-import os
 import tempfile
 from pathlib import Path
 from typing import Literal
@@ -69,40 +68,34 @@ def _convert_pptx_to_pdf(pptx_path: str, pdf_path: str) -> ConversionResult:
     """
     import subprocess
     import shutil
-    from pathlib import Path
+    from lecture_auto.libreoffice_runtime import find_libreoffice
 
     try:
-        # Find LibreOffice binary
-        libreoffice_bin = shutil.which("libreoffice") or shutil.which("soffice")
+        libreoffice_bin = find_libreoffice()
         if not libreoffice_bin:
             raise DocumentConversionError(
                 "LibreOffice is not installed. Please install LibreOffice to enable high-fidelity document conversion."
             )
 
         source = Path(pptx_path)
-        output_dir = source.parent
+        with tempfile.TemporaryDirectory(prefix="lecture-auto-convert-") as output_dir:
+            cmd = [
+                libreoffice_bin,
+                "--headless",
+                "--convert-to", "pdf",
+                "--outdir", output_dir,
+                str(source),
+            ]
 
-        # LibreOffice command: --convert-to pdf creates a file with the same name but .pdf extension
-        # in the specified output directory.
-        cmd = [
-            libreoffice_bin,
-            "--headless",
-            "--convert-to", "pdf",
-            "--outdir", str(output_dir),
-            str(source)
-        ]
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+            if result.returncode != 0:
+                raise DocumentConversionError(f"LibreOffice conversion failed: {result.stderr}")
 
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
-        if result.returncode != 0:
-            raise DocumentConversionError(f"LibreOffice conversion failed: {result.stderr}")
+            expected_pdf = Path(output_dir) / f"{source.stem}.pdf"
+            if not expected_pdf.exists():
+                raise DocumentConversionError(f"Conversion succeeded but output file not found: {expected_pdf}")
 
-        # LibreOffice saves as source_filename.pdf in the output_dir.
-        # We need to move/rename it to the requested pdf_path.
-        expected_pdf = output_dir / (source.stem + ".pdf")
-        if not expected_pdf.exists():
-            raise DocumentConversionError(f"Conversion succeeded but output file not found: {expected_pdf}")
-
-        shutil.move(str(expected_pdf), pdf_path)
+            shutil.move(str(expected_pdf), pdf_path)
         return "converted"
 
     except subprocess.TimeoutExpired:

@@ -1370,6 +1370,7 @@ class SettingsPage(QWidget):
         self.runtime_whisper_status = QLabel("확인 전")
         self.runtime_deepfilter_status = QLabel("확인 전")
         self.runtime_gemini_status = QLabel("확인 전")
+        self.runtime_libreoffice_status = QLabel("확인 전")
         self.runtime_path_status = QLabel("-")
         self.runtime_path_status.setObjectName("SettingsPath")
         self.runtime_path_status.setTextInteractionFlags(Qt.TextSelectableByMouse)
@@ -1385,6 +1386,7 @@ class SettingsPage(QWidget):
             ("Whisper", self.runtime_whisper_status),
             ("DeepFilterNet", self.runtime_deepfilter_status),
             ("Gemini SDK", self.runtime_gemini_status),
+            ("LibreOffice", self.runtime_libreoffice_status),
         )
         for row_index, (label, value) in enumerate(runtime_statuses):
             field_label = QLabel(label)
@@ -1411,7 +1413,8 @@ class SettingsPage(QWidget):
                 ("Whisper 전사", "whisper"),
                 ("DeepFilterNet 노이즈 제거", "deepfilter"),
                 ("Gemini SDK", "gemini"),
-                ("전체 기능", "all"),
+                ("LibreOffice 문서 변환", "libreoffice"),
+                ("전체 AI 기능", "all"),
             )
         )
         runtime_action_column.addWidget(self.runtime_feature)
@@ -1662,6 +1665,10 @@ class SettingsPage(QWidget):
         self.runtime_gemini_status.setText(
             f"설치됨 · {status.gemini_version or 'version unknown'}" if status.gemini_installed else "설치되지 않음"
         )
+        from lecture_auto.libreoffice_runtime import find_libreoffice
+
+        office = find_libreoffice(self.window.container.runtime.runtime_dir)
+        self.runtime_libreoffice_status.setText("설치됨" if office else "설치되지 않음")
         self.runtime_path_status.setText(status.python_path or "-")
         self.runtime_error_status.setText(status.error or "없음")
 
@@ -1676,6 +1683,7 @@ class SettingsPage(QWidget):
             "deepfilter": "약 1.5~3GB",
             "gemini": "약 50~150MB",
             "all": "약 2~4GB",
+            "libreoffice": "약 300MB 다운로드, 설치 공간 별도",
         }
         message = (
             f"다운로드 예상 크기: {estimates[feature]}\n"
@@ -1689,6 +1697,10 @@ class SettingsPage(QWidget):
         manager = self.window.container.runtime
         def work(token, emit, job_id):
             kwargs = {"progress": self._runtime_progress(emit, job_id), "cancellation_token": token}
+            if feature == "libreoffice":
+                from lecture_auto.libreoffice_runtime import install_libreoffice
+                install_libreoffice(manager.runtime_dir, **kwargs)
+                return manager.probe()
             if feature == "whisper":
                 return manager.install_whisper(**kwargs)
             if feature == "deepfilter":

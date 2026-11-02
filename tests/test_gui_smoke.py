@@ -330,7 +330,7 @@ def test_settings_groups_runtime_and_model_actions(tmp_path: Path, qtbot) -> Non
     button_labels = {button.text() for button in page.findChildren(QPushButton)}
 
     assert len(panels) == 2
-    assert page.runtime_feature.count() == 4
+    assert page.runtime_feature.count() == 5
     assert {
         "선택 항목 설치",
         "상태 다시 확인",
@@ -614,4 +614,4 @@ def test_local_ai_section_shows_uninstalled_features(tmp_path: Path, qtbot) -> N
     assert [
         window.settings_page.runtime_feature.itemData(index)
         for index in range(window.settings_page.runtime_feature.count())
-    ] == ["whisper", "deepfilter", "gemini", "all"]
+    ] == ["whisper", "deepfilter", "gemini", "libreoffice", "all"]

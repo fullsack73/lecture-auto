@@ -674,7 +674,10 @@ def runtime_status(
 ) -> None:
     from lecture_auto.local_runtime import LocalRuntimeManager
 
+    from lecture_auto.libreoffice_runtime import find_libreoffice
+
     status = asdict(LocalRuntimeManager().probe())
+    status["libreoffice_path"] = find_libreoffice()
     if as_json:
         typer.echo(json.dumps(status, ensure_ascii=False, separators=(",", ":")))
         return
@@ -683,25 +686,31 @@ def runtime_status(
     typer.echo(f"Whisper: {'installed' if status['whisper_installed'] else 'not installed'}")
     typer.echo(f"DeepFilterNet: {'installed' if status['deepfilter_installed'] else 'not installed'}")
     typer.echo(f"Gemini add-on: {'installed' if status['gemini_installed'] else 'not installed'}")
+    typer.echo(f"LibreOffice: {status['libreoffice_path'] or 'not installed'}")
     if status.get("error"):
         typer.echo(f"Error: {status['error']}")
 
 
 @runtime_app.command("install")
 def runtime_install(
-    feature: str = typer.Option("all", "--feature", help="whisper, deepfilter, gemini, or all"),
+    feature: str = typer.Option("all", "--feature", help="whisper, deepfilter, gemini, libreoffice, or all (AI features)"),
 ) -> None:
     from lecture_auto.local_runtime import LocalRuntimeManager
 
     normalized = feature.strip().lower()
-    if normalized not in {"whisper", "deepfilter", "gemini", "all"}:
-        raise typer.BadParameter("feature must be whisper, deepfilter, gemini, or all")
+    if normalized not in {"whisper", "deepfilter", "gemini", "libreoffice", "all"}:
+        raise typer.BadParameter("feature must be whisper, deepfilter, gemini, libreoffice, or all")
     manager = LocalRuntimeManager()
 
     def progress(stage, completed, total, message) -> None:
         suffix = f" ({completed}/{total})" if completed is not None and total is not None else ""
         typer.echo(f"[{stage}] {message}{suffix}")
 
+    if normalized == "libreoffice":
+        from lecture_auto.libreoffice_runtime import install_libreoffice
+        path = install_libreoffice(manager.runtime_dir, progress=progress)
+        typer.echo(f"LibreOffice ready: {path}")
+        return
     if normalized == "whisper":
         status = manager.install_whisper(progress=progress)
     elif normalized == "deepfilter":
