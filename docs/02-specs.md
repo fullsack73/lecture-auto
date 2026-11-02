@@ -46,6 +46,9 @@ GUI 설정 화면은 콤보·체크·숫자 변경을 짧게 debounce한 뒤 자
 - local Whisper worker는 앱 프로세스와 분리된 장수 JSONL 프로세스로 실행한다.
   모델명/device/compute/thread별 인스턴스를 최대 2개 LRU로 재사용하며 기본 300초
   idle timeout, 명시적 unload, 취소·timeout·crash·앱 종료 시 프로세스 정리를 지원한다.
+  재사용 worker가 실행 중이면 추가 전사는 별도의 단발 worker로 병렬 실행하며,
+  각 작업의 실패·취소는 다른 전사를 종료하지 않는다. idle 정리는 실행 중인 worker를
+  제외하고 worker 잠금을 획득한 상태에서만 수행한다.
 - CPU `cpu_threads=0`은 worker가 물리 core 수를 보수적으로 추정해 사용한다.
   `num_workers`와 함께 무제한 논리 core oversubscription을 만들지 않는다.
 - LLM은 `gemini`와 `ollama` provider를 공통 `LLMProviderAdapter` 경계로 제공한다.

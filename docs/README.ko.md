@@ -246,6 +246,7 @@ STT:
 - local mode는 device/compute/batch/VAD/beam/hotwords와 제한된 저신뢰 구간 재전사를 CLI·TUI·GUI에서 설정
 - raw Markdown 옆 `*-raw.stt.json`에 timestamp/confidence/runtime을 보존
 - 장수 worker가 같은 모델을 재사용하고 idle/unload/취소/비정상 종료 시 정리
+- 서로 다른 세션은 병렬 전사 가능. 추가 전사는 별도 worker를 사용하므로 메모리와 CPU 사용량이 증가하며, 한 작업의 오류·취소는 다른 전사에 영향을 주지 않음
 - edited transcript 옆 `*.audit.json`에 숫자·고유명사 변경과 diff를 보존
 
 ### 로컬 STT 하드웨어별 추천

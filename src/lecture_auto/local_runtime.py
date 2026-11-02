@@ -130,60 +130,95 @@ class _PersistentWorker:
         timeout: float | None,
     ) -> dict[str, Any]:
         token = cancellation_token or CancellationToken()
-        with self.lock:
-            if self._idle_timer is not None:
-                self._idle_timer.cancel()
-                self._idle_timer = None
+        while not self.lock.acquire(timeout=0.1):
+            token.raise_if_cancelled()
+        try:
+            return self._request_locked(request, progress, token, timeout)
+        finally:
+            self.lock.release()
+
+    def try_request(
+        self,
+        request: dict[str, Any],
+        *,
+        progress: RuntimeProgress | None,
+        cancellation_token: CancellationToken | None,
+        timeout: float | None,
+    ) -> dict[str, Any] | None:
+        if not self.lock.acquire(blocking=False):
+            return None
+        try:
             if not self.alive:
-                raise LocalRuntimeError("Warm local AI worker is not running.")
-            assert self.process.stdin is not None
-            self.process.stdin.write(json.dumps(request, ensure_ascii=False) + "\n")
-            self.process.stdin.flush()
-            started = time.monotonic()
-            worker_error: str | None = None
-            while True:
-                if token.is_cancelled:
-                    self.terminate()
-                    raise TaskCancelledError("Local AI worker was canceled.")
-                if timeout is not None and time.monotonic() - started > timeout:
-                    self.terminate()
-                    raise LocalRuntimeError("Local AI worker timed out.")
-                try:
-                    line = self.events.get(timeout=0.1)
-                except queue.Empty:
-                    if not self.alive:
-                        break
-                    continue
-                if line is None:
-                    break
-                try:
-                    event = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                event_type = event.get("type")
-                if event_type == "progress" and progress:
-                    progress(
-                        str(event.get("stage") or "working"),
-                        event.get("completed"),
-                        event.get("total"),
-                        str(event.get("message") or ""),
-                    )
-                elif event_type == "result":
-                    self.last_used = time.monotonic()
-                    self._schedule_idle_termination()
-                    value = event.get("result")
-                    return value if isinstance(value, dict) else {"value": value}
-                elif event_type == "error":
-                    worker_error = str(
-                        event.get("message") or event.get("code") or "Worker failed"
-                    )
-                    break
-            detail = worker_error or "\n".join(self.stderr_tail[-10:])
+                return None
+            token = cancellation_token or CancellationToken()
+            return self._request_locked(request, progress, token, timeout)
+        except BaseException:
             self.terminate()
-            raise LocalRuntimeError(
-                detail
-                or f"Local AI worker crashed with exit code {self.process.poll()}."
-            )
+            raise
+        finally:
+            self.lock.release()
+
+    def _request_locked(
+        self,
+        request: dict[str, Any],
+        progress: RuntimeProgress | None,
+        token: CancellationToken,
+        timeout: float | None,
+    ) -> dict[str, Any]:
+        token.raise_if_cancelled()
+        if self._idle_timer is not None:
+            self._idle_timer.cancel()
+            self._idle_timer = None
+        if not self.alive:
+            raise LocalRuntimeError("Warm local AI worker is not running.")
+        assert self.process.stdin is not None
+        self.process.stdin.write(json.dumps(request, ensure_ascii=False) + "\n")
+        self.process.stdin.flush()
+        started = time.monotonic()
+        worker_error: str | None = None
+        while True:
+            if token.is_cancelled:
+                self.terminate()
+                raise TaskCancelledError("Local AI worker was canceled.")
+            if timeout is not None and time.monotonic() - started > timeout:
+                self.terminate()
+                raise LocalRuntimeError("Local AI worker timed out.")
+            try:
+                line = self.events.get(timeout=0.1)
+            except queue.Empty:
+                if not self.alive:
+                    break
+                continue
+            if line is None:
+                break
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            event_type = event.get("type")
+            if event_type == "progress" and progress:
+                progress(
+                    str(event.get("stage") or "working"),
+                    event.get("completed"),
+                    event.get("total"),
+                    str(event.get("message") or ""),
+                )
+            elif event_type == "result":
+                self.last_used = time.monotonic()
+                self._schedule_idle_termination()
+                value = event.get("result")
+                return value if isinstance(value, dict) else {"value": value}
+            elif event_type == "error":
+                worker_error = str(
+                    event.get("message") or event.get("code") or "Worker failed"
+                )
+                break
+        detail = worker_error or "\n".join(self.stderr_tail[-10:])
+        self.terminate()
+        raise LocalRuntimeError(
+            detail
+            or f"Local AI worker crashed with exit code {self.process.poll()}."
+        )
 
     def terminate(self) -> None:
         if self._idle_timer is not None:
@@ -638,7 +673,7 @@ class LocalRuntimeManager:
                 )
                 self._warm_workers[key] = worker
         try:
-            return worker.request(
+            result = worker.try_request(
                 request,
                 progress=progress,
                 cancellation_token=cancellation_token,
@@ -650,17 +685,33 @@ class LocalRuntimeManager:
                     self._warm_workers.pop(key, None)
             worker.terminate()
             raise
+        if result is not None:
+            return result
+        # A busy or expired warm worker must not queue unrelated transcriptions.
+        return self._run_worker(
+            python,
+            request,
+            worker_script=worker_script,
+            progress=progress,
+            cancellation_token=cancellation_token,
+            timeout=timeout,
+        )
 
     def _reap_idle_workers_locked(self) -> None:
         now = time.monotonic()
         for key, worker in tuple(self._warm_workers.items()):
-            expired = (
-                self.warm_worker_idle_timeout_seconds == 0
-                or now - worker.last_used >= self.warm_worker_idle_timeout_seconds
-            )
-            if not worker.alive or expired:
-                worker.terminate()
-                self._warm_workers.pop(key, None)
+            if not worker.lock.acquire(blocking=False):
+                continue
+            try:
+                expired = (
+                    self.warm_worker_idle_timeout_seconds == 0
+                    or now - worker.last_used >= self.warm_worker_idle_timeout_seconds
+                )
+                if not worker.alive or expired:
+                    worker.terminate()
+                    self._warm_workers.pop(key, None)
+            finally:
+                worker.lock.release()
 
     def unload_whisper(self) -> int:
         unloaded = 0
@@ -714,6 +765,7 @@ class LocalRuntimeManager:
         if not selected_worker.is_file():
             raise LocalRuntimeError(f"Add-on worker script is missing: {selected_worker}")
         token = cancellation_token or CancellationToken()
+        token.raise_if_cancelled()
         env = dict(os.environ)
         env["PYTHONIOENCODING"] = "utf-8"
         env["PYTHONUTF8"] = "1"

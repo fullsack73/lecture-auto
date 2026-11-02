@@ -6,11 +6,11 @@ from scripts.project_version import read_project_version
 def test_release_builders_use_pyproject_version() -> None:
     root = Path(__file__).resolve().parents[1]
 
-    assert read_project_version(root) == "0.1.11"
+    assert read_project_version(root) == "0.1.11+hotfix"
     pyproject = (root / "pyproject.toml").read_text()
     assert '"PySide6>=6.8,<6.12"' in pyproject
     assert '"nuitka==4.1.3"' in pyproject
-    assert '--macos-app-version="$APP_VERSION"' in (
+    assert '--macos-app-version="${APP_VERSION%%+*}"' in (
         root / "scripts" / "build_macos_app.sh"
     ).read_text()
     assert "--include-distribution-metadata=lecture-auto" in (

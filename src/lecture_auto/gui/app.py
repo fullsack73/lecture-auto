@@ -71,7 +71,7 @@ from lecture_auto.tasking import TaskCancelledError, TaskEvent
 
 
 try:
-    APP_VERSION = version("lecture-auto")
+    APP_VERSION = version("lecture-auto").replace("+", "-")
 except PackageNotFoundError:
     APP_VERSION = "dev"
 
