@@ -22,6 +22,9 @@ def test_release_builders_use_pyproject_version() -> None:
     assert '"--include-distribution-metadata=lecture-auto"' in (
         root / "scripts" / "build_desktop_app.py"
     ).read_text()
+    assert '--file-version={APP_VERSION.split(\'+\', 1)[0]}' in (
+        root / "scripts" / "build_desktop_app.py"
+    ).read_text()
     assert "sys.version_info[:2] == (3, 11)" in (
         root / "scripts" / "build_macos_app.sh"
     ).read_text()

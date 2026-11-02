@@ -113,8 +113,8 @@ def build(platform_name: str | None = None, *, smoke_test: bool = True) -> Path:
             (
                 "--windows-console-mode=disable",
                 f"--windows-icon-from-ico={windows_icon}",
-                f"--file-version={APP_VERSION}",
-                f"--product-version={APP_VERSION}",
+                f"--file-version={APP_VERSION.split('+', 1)[0]}",
+                f"--product-version={APP_VERSION.split('+', 1)[0]}",
                 "--product-name=Lecture Auto",
                 "--company-name=Lecture Auto",
                 "--file-description=Lecture Auto desktop application",
