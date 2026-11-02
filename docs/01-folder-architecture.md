@@ -37,7 +37,7 @@ src/lecture_auto/
 ├─ gui/
 │  ├─ app.py                    # PySide6 GUI entry point
 │  ├─ LectureAuto.py            # GUI 화면/컨트롤러
-│  ├─ jobs.py                   # GUI 백그라운드 작업
+│  ├─ jobs.py                   # GUI FIFO 작업 대기열과 독립 오디오 실행
 │  ├─ i18n.py                   # GUI 번역
 │  └─ assets/                   # 앱 아이콘 등 패키지 리소스
 ├─ application.py              # AppConfig, 설정 저장소, 서비스 조립, 비밀값 저장

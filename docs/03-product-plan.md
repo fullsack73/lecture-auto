@@ -56,7 +56,9 @@ PySide6 기반으로 같은 workspace와 세션 데이터를 공유한다. 세�
 - local device/compute/batch/VAD/beam과 용어 hotword 설정
 - session glossary biasing, 자료 glossary 기반 정제 검증과 제한된 저신뢰 구간 고품질 재전사
 - warm local worker, 하드웨어 profile, 조건부 오디오 후보 비교
-- 서로 다른 세션의 로컬 전사를 독립 프로세스로 병렬 실행하고 실패·취소를 격리
+- 전사·전사문 정제·요약을 세션과 provider에 관계없이 GUI의 하나의 FIFO 대기열에서 순차 처리
+- 같은 세션의 후속 작업도 등록하고, 실패·취소 후 다음 작업을 계속 처리
+- 녹음과 오디오 작업은 AI 대기열과 별도로 실행
 - raw transcript 생성
 - timestamp/confidence/runtime을 담은 raw STT sidecar 생성
 - LLM으로 오탈자/띄어쓰기/표현을 다듬되 의미와 용어를 보존하는 edited transcript 생성

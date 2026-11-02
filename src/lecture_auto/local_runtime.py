@@ -137,27 +137,6 @@ class _PersistentWorker:
         finally:
             self.lock.release()
 
-    def try_request(
-        self,
-        request: dict[str, Any],
-        *,
-        progress: RuntimeProgress | None,
-        cancellation_token: CancellationToken | None,
-        timeout: float | None,
-    ) -> dict[str, Any] | None:
-        if not self.lock.acquire(blocking=False):
-            return None
-        try:
-            if not self.alive:
-                return None
-            token = cancellation_token or CancellationToken()
-            return self._request_locked(request, progress, token, timeout)
-        except BaseException:
-            self.terminate()
-            raise
-        finally:
-            self.lock.release()
-
     def _request_locked(
         self,
         request: dict[str, Any],
@@ -327,6 +306,7 @@ class LocalRuntimeManager:
         )
         self._warm_workers: dict[tuple[str, str], _PersistentWorker] = {}
         self._warm_workers_lock = threading.Lock()
+        self._whisper_request_lock = threading.Lock()
         self._feature_pythons: dict[RuntimeFeature, Path] = {}
         self._worker_finalizer = weakref.finalize(
             self,
@@ -657,45 +637,42 @@ class LocalRuntimeManager:
         cancellation_token: CancellationToken | None,
         timeout: float | None,
     ) -> dict[str, Any]:
-        if not worker_script.is_file():
-            raise LocalRuntimeError(f"Add-on worker script is missing: {worker_script}")
-        key = (str(python.resolve()), str(worker_script.resolve()))
-        with self._warm_workers_lock:
-            self._reap_idle_workers_locked()
-            worker = self._warm_workers.get(key)
-            if worker is None or not worker.alive:
-                if worker is not None:
-                    worker.terminate()
-                worker = _PersistentWorker(
-                    python,
-                    worker_script,
-                    idle_timeout_seconds=self.warm_worker_idle_timeout_seconds,
-                )
-                self._warm_workers[key] = worker
+        token = cancellation_token or CancellationToken()
+        token.raise_if_cancelled()
+        while not self._whisper_request_lock.acquire(timeout=0.1):
+            token.raise_if_cancelled()
         try:
-            result = worker.try_request(
-                request,
-                progress=progress,
-                cancellation_token=cancellation_token,
-                timeout=timeout,
-            )
-        except BaseException:
+            token.raise_if_cancelled()
+            if not worker_script.is_file():
+                raise LocalRuntimeError(f"Add-on worker script is missing: {worker_script}")
+            key = (str(python.resolve()), str(worker_script.resolve()))
             with self._warm_workers_lock:
-                if self._warm_workers.get(key) is worker:
-                    self._warm_workers.pop(key, None)
-            worker.terminate()
-            raise
-        if result is not None:
-            return result
-        # A busy or expired warm worker must not queue unrelated transcriptions.
-        return self._run_worker(
-            python,
-            request,
-            worker_script=worker_script,
-            progress=progress,
-            cancellation_token=cancellation_token,
-            timeout=timeout,
-        )
+                self._reap_idle_workers_locked()
+                worker = self._warm_workers.get(key)
+                if worker is None or not worker.alive:
+                    if worker is not None:
+                        worker.terminate()
+                    worker = _PersistentWorker(
+                        python,
+                        worker_script,
+                        idle_timeout_seconds=self.warm_worker_idle_timeout_seconds,
+                    )
+                    self._warm_workers[key] = worker
+            try:
+                return worker.request(
+                    request,
+                    progress=progress,
+                    cancellation_token=token,
+                    timeout=timeout,
+                )
+            except BaseException:
+                with self._warm_workers_lock:
+                    if self._warm_workers.get(key) is worker:
+                        self._warm_workers.pop(key, None)
+                worker.terminate()
+                raise
+        finally:
+            self._whisper_request_lock.release()
 
     def _reap_idle_workers_locked(self) -> None:
         now = time.monotonic()

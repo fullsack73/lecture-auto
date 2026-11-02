@@ -96,7 +96,7 @@ To build without installing into Applications, omit `--install`:
 
 ```bash
 scripts/build_macos_app.sh
-open build/macos/LectureAuto.app
+open "build/macos/Lecture Auto.app"
 ```
 
 The first FFmpeg/Nuitka build can take some time. The script prepares ARM64 FFmpeg/FFprobe from source, bundles them with the app, and applies an ad-hoc signature for local execution. The result is not a Developer ID-signed or Apple-notarized public release and is intended for use on the Mac where it was built.

@@ -16,6 +16,7 @@
 - **Windows/Linux 미디어 도구**: 월말 보존되는 고정 BtbN LGPL 빌드와 SHA-256을 사용한다. Windows는 DirectShow, Linux는 PulseAudio 또는 ALSA 입력과 MP3 지원을 검증하며 FFmpeg 라이선스와 소스 정보를 앱에 포함한다.
 - **LibreOffice 애드온**: macOS, Windows, Linux에서 설정 또는 CLI로 사용자 runtime에 별도 설치하며 기존 시스템 설치도 탐색한다. 공식 설치 파일의 SHA-256을 검증하고 실행 검증 후 활성화한다. 전체 AI 설치와 Python runtime 제거는 LibreOffice를 변경하지 않는다.
 - **데스크톱 패키징**: 모든 플랫폼은 Nuitka standalone 빌드에서 구조화 노트 템플릿, add-on worker, `uv`, FFmpeg/FFprobe를 같은 상대 경로로 포함한다. Windows는 Inno Setup installer를, Linux는 tar.gz와 선택적 AppImage를 생성한다.
+- **macOS 빌드 경로/이름**: 빌드 출력은 `build/macos`, 배포 번들은 `Lecture Auto.app`으로 고정한다. `BUILD_DIR` 환경변수나 버전명을 출력 경로/번들명에 반영하지 않는다. 버전은 앱 metadata로만 구분하며 설치 대상 `/Applications/Lecture Auto.app`과 같은 이름을 사용한다. 빌드 출력의 앱이 실행 중이면 덮어쓰지 않는다.
 - **macOS 재설치**: macOS 앱은 패키징 호환성이 검증된 ARM64 Python 3.11로만 빌드한다. 실행 중인 설치본은 녹음과 백그라운드 작업 보호를 위해 빌드 전에 감지하고 교체하지 않는다. 닫힌 기존 앱은 새 번들을 임시 경로에 복사하고 서명 및 Ollama 경로 GUI smoke launch를 검증한 뒤 교체한다. 복사나 검증에 실패하면 기존 설치본을 보존한다.
 - **데스크톱 제공 방식**: 버전 태그는 Windows x86_64 installer, Linux x86_64 AppImage/portable archive와 SHA-256 목록을 GitHub Release에 게시한다. macOS 로컬 앱은 ad-hoc 서명이고 Windows/Linux 배포본도 코드 서명되지 않는다.
 
@@ -28,6 +29,13 @@
 GUI 설정 화면은 콤보·체크·숫자 변경을 짧게 debounce한 뒤 자동 저장하고 서비스를 갱신한다. 텍스트 설정은 편집 완료 시 자동 적용한다. 화면을 초기값으로 채우는 동안 발생한 signal은 저장을 유발하지 않으며, 별도의 하단 저장 버튼을 요구하지 않는다.
 
 녹음 중이거나 녹음을 종료 처리 중인 세션의 오디오는 아직 확정된 입력이 아니므로 가져오기, 볼륨/노이즈 보정, 전사를 실행하지 않는다. GUI는 해당 작업을 비활성화하고 서비스도 같은 규칙을 검증한다.
+
+GUI의 전사(API/local)·전사문 정제·노트 미리보기/저장은 하나의 FIFO 대기열에서
+요청 순서대로 하나씩 실행한다. 같은 세션의 후속 요청도 대기열에 등록하며,
+실패·취소 후에도 다음 요청을 계속 처리한다. 대기 중인 취소 요청은 실행하지 않는다.
+녹음 시작/중지, 오디오 가져오기, 볼륨 보정, 노이즈 제거는 별도 실행 풀을 사용해
+AI 대기열을 기다리거나 녹음이 끝날 때까지 AI 대기열을 막지 않는다.
+앱 종료 시 실행 중·대기 중 작업을 모두 취소하며 대기열은 재시작 시 복원하지 않는다.
 
 ### Application and services
 
@@ -46,9 +54,9 @@ GUI 설정 화면은 콤보·체크·숫자 변경을 짧게 debounce한 뒤 자
 - local Whisper worker는 앱 프로세스와 분리된 장수 JSONL 프로세스로 실행한다.
   모델명/device/compute/thread별 인스턴스를 최대 2개 LRU로 재사용하며 기본 300초
   idle timeout, 명시적 unload, 취소·timeout·crash·앱 종료 시 프로세스 정리를 지원한다.
-  재사용 worker가 실행 중이면 추가 전사는 별도의 단발 worker로 병렬 실행하며,
-  각 작업의 실패·취소는 다른 전사를 종료하지 않는다. idle 정리는 실행 중인 worker를
-  제외하고 worker 잠금을 획득한 상태에서만 수행한다.
+  추가 전사는 앞 요청이 끝날 때까지 기다리며 병렬 단발 worker를 만들지 않는다.
+  대기 중인 요청의 취소는 실행 중인 worker를 종료하지 않고, 실행 실패 후 다음
+  요청은 새 worker를 사용한다. idle 정리는 worker 잠금을 획득한 상태에서만 수행한다.
 - CPU `cpu_threads=0`은 worker가 물리 core 수를 보수적으로 추정해 사용한다.
   `num_workers`와 함께 무제한 논리 core oversubscription을 만들지 않는다.
 - LLM은 `gemini`와 `ollama` provider를 공통 `LLMProviderAdapter` 경계로 제공한다.

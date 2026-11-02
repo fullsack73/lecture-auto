@@ -108,6 +108,22 @@ def test_transcription_progress_fills_matching_session_row(tmp_path: Path, qtbot
     assert "전사 중 · 25%" in item.text()
 
 
+def test_canceling_queued_transcription_keeps_running_progress(tmp_path: Path, qtbot) -> None:
+    from lecture_auto.tasking import TaskCancelledError
+
+    window = make_window(tmp_path, qtbot)
+    window.container.session.session_create("week-01", "2026-11-03", "Intro", "CS")
+    window.sessions_page.refresh()
+    window._job_labels.update({"running": "전사", "queued": "전사"})
+    window._job_sessions.update({"running": "week-01", "queued": "week-01"})
+    window._job_progress(TaskEvent("running", "week-01", "transcribing", 30, 120))
+
+    window._job_failure("queued", TaskCancelledError("canceled"))
+
+    assert window.sessions_page.list.item(0).data(SESSION_PROGRESS_ROLE) == 25
+    assert window._transcription_jobs["week-01"] == "running"
+
+
 def test_command_feedback_does_not_create_bottom_status_bar(tmp_path: Path, qtbot) -> None:
     window = make_window(tmp_path, qtbot)
 
@@ -551,6 +567,40 @@ def test_background_job_completes_without_blocking_ui(tmp_path: Path, qtbot) -> 
 
     qtbot.waitUntil(lambda: window.jobs.active_count == 0, timeout=3000)
     assert "완료" in window.task_list.item(0).text()
+
+
+def test_recording_controls_bypass_waiting_transcription_and_summary(tmp_path: Path, qtbot) -> None:
+    window = make_window(tmp_path, qtbot)
+    service = window.container.session
+    service.runtime_adapter = NoopCaptureRuntimeAdapter()
+    service.session_create("lecture", "2026-11-03", "Lecture", "CS")
+    service.session_create("recording", "2026-11-03", "Recording", "CS")
+    started, release = Event(), Event()
+    order = []
+
+    def transcribe(_token, _progress, _job):
+        order.append("transcribe")
+        started.set()
+        assert release.wait(3)
+
+    try:
+        window.run_background("전사", "lecture", transcribe)
+        qtbot.waitUntil(started.is_set)
+        window.run_background("노트 저장", "lecture", lambda *_: order.append("summary"))
+        assert window.task_status.text() == "작업 중 1개 · 대기 1개"
+        window.sessions_page.select_session("recording")
+        window.sessions_page.capture_start()
+        qtbot.waitUntil(lambda: service.session_detail("recording").payload["status"] == "recording")
+        # Wait for the short start request to finish, while capture itself stays active.
+        qtbot.waitUntil(lambda: window.jobs.active_count == 2)
+        assert order == ["transcribe"]
+        window.sessions_page.capture_stop()
+        qtbot.waitUntil(lambda: service.session_detail("recording").payload["status"] == "completed")
+        assert order == ["transcribe"]
+    finally:
+        release.set()
+        qtbot.waitUntil(lambda: window.jobs.active_count == 0, timeout=3000)
+    assert order == ["transcribe", "summary"]
 
 
 def test_non_blocking_status_job_does_not_show_exit_confirmation(tmp_path: Path, qtbot) -> None:

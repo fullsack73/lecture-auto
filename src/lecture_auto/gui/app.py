@@ -1000,17 +1000,17 @@ class SessionsPage(QWidget):
 
     def capture_start(self) -> None:
         sid = self._require_id()
-        self.window.run_background("녹음 시작", sid, lambda _t, _p, _j: self.window.container.session.capture_start(sid))
+        self.window.run_background("녹음 시작", sid, lambda _t, _p, _j: self.window.container.session.capture_start(sid), queued=False)
 
     def capture_stop(self) -> None:
         sid = self._require_id()
-        self.window.run_background("녹음 중지", sid, lambda _t, _p, _j: self.window.container.session.capture_stop(sid))
+        self.window.run_background("녹음 중지", sid, lambda _t, _p, _j: self.window.container.session.capture_stop(sid), queued=False)
 
     def import_audio(self) -> None:
         sid = self._require_id()
         path, _ = QFileDialog.getOpenFileName(self, "오디오 가져오기", "", "Audio (*.wav *.mp3)")
         if path:
-            self.window.run_background("오디오 가져오기", sid, lambda _t, _p, _j: self.window.container.session.import_audio(sid, path))
+            self.window.run_background("오디오 가져오기", sid, lambda _t, _p, _j: self.window.container.session.import_audio(sid, path), queued=False)
 
     def import_material(self) -> None:
         sid = self._require_id()
@@ -1020,7 +1020,7 @@ class SessionsPage(QWidget):
 
     def refine_volume(self) -> None:
         sid = self._require_id()
-        self.window.run_background("볼륨 보정", sid, lambda _t, _p, _j: self.window.container.session.refine_audio_volume(sid))
+        self.window.run_background("볼륨 보정", sid, lambda _t, _p, _j: self.window.container.session.refine_audio_volume(sid), queued=False)
 
     def refine_noise(self) -> None:
         sid = self._require_id()
@@ -1035,6 +1035,7 @@ class SessionsPage(QWidget):
                 cancellation_token=token,
                 job_id=job,
             ),
+            queued=False,
         )
 
     def transcribe(self) -> None:
@@ -1897,6 +1898,7 @@ class MainWindow(QMainWindow):
         self._job_items: dict[str, QListWidgetItem] = {}
         self._job_labels: dict[str, str] = {}
         self._job_sessions: dict[str, str | None] = {}
+        self._transcription_jobs: dict[str, str] = {}
         self._pending_service_config: AppConfig | None = None
         self.setWindowTitle("Lecture Auto")
         self.resize(1280, 820)
@@ -2018,18 +2020,20 @@ class MainWindow(QMainWindow):
         work: Callable[..., Any],
         *,
         block_close: bool = True,
+        queued: bool = True,
     ) -> None:
         try:
             job_id = self.jobs.submit(
                 work,
                 session_id=session_id,
                 block_close=block_close,
+                queued=queued,
             )
             self._job_labels[job_id] = label
             self._job_sessions[job_id] = session_id
             item = QListWidgetItem(f"{label}: 대기 중")
             item.setData(Qt.UserRole, job_id)
-            self.task_list.insertItem(0, item)
+            self.task_list.addItem(item)
             self.task_list.setVisible(True)
             self._job_items[job_id] = item
         except Exception as exc:
@@ -2043,6 +2047,7 @@ class MainWindow(QMainWindow):
             item.setText(f"{label}: {event.message or event.stage}")
         session_id = event.session_id or self._job_sessions.get(event.job_id)
         if label == "전사" and session_id:
+            self._transcription_jobs[session_id] = event.job_id
             self.sessions_page.set_transcription_progress(
                 session_id,
                 transcription_progress_percent(event),
@@ -2058,7 +2063,8 @@ class MainWindow(QMainWindow):
     def _job_success(self, job_id: str, result: object) -> None:
         label = self._job_labels.get(job_id, job_id)
         session_id = self._job_sessions.pop(job_id, None)
-        if label == "전사" and session_id:
+        if session_id and self._transcription_jobs.get(session_id) == job_id:
+            self._transcription_jobs.pop(session_id)
             self.sessions_page.set_transcription_progress(session_id, None)
         item = self._job_items.get(job_id)
         message = result.message if isinstance(result, CommandResult) else str(result or "완료")
@@ -2133,17 +2139,20 @@ class MainWindow(QMainWindow):
     def _job_failure(self, job_id: str, error: object) -> None:
         label = self._job_labels.get(job_id, job_id)
         session_id = self._job_sessions.pop(job_id, None)
-        if label == "전사" and session_id:
+        if session_id and self._transcription_jobs.get(session_id) == job_id:
+            self._transcription_jobs.pop(session_id)
             self.sessions_page.set_transcription_progress(session_id, None)
         item = self._job_items.get(job_id)
         if item:
-            item.setText(f"{label}: 실패 · {error}")
+            status = "취소됨" if isinstance(error, TaskCancelledError) else "실패"
+            item.setText(f"{label}: {status} · {error}")
         if not isinstance(error, TaskCancelledError):
             self.show_error(error if isinstance(error, BaseException) else RuntimeError(str(error)))
 
     @Slot(int)
     def _active_changed(self, count: int) -> None:
-        self.task_status.setText(f"작업 중 {count}개" if count else "준비됨")
+        pending = self.jobs.pending_count
+        self.task_status.setText(f"작업 중 {count - pending}개 · 대기 {pending}개" if count else "준비됨")
         self.task_progress.setVisible(bool(count))
         self.cancel_jobs_button.setVisible(bool(count))
         if not count:

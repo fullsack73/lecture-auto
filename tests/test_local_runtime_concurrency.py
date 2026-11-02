@@ -41,11 +41,16 @@ def runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 
 
 @pytest.mark.parametrize("expired", [False, True])
-def test_concurrent_transcriptions_are_isolated_and_reuse_warm_model(
+def test_concurrent_transcriptions_wait_and_reuse_one_warm_worker(
     runtime: LocalRuntimeManager, tmp_path: Path, expired: bool
 ) -> None:
-    started = Event()
+    started, second_called, second_started = Event(), Event(), Event()
     gate = tmp_path / "release"
+
+    def second_request():
+        second_called.set()
+        return runtime.run_feature("whisper", {}, progress=lambda *_: second_started.set(), timeout=4)
+
     with ThreadPoolExecutor(max_workers=2) as executor:
         first = executor.submit(
             runtime.run_feature, "whisper", {"gate": str(gate)},
@@ -56,40 +61,44 @@ def test_concurrent_transcriptions_are_isolated_and_reuse_warm_model(
             warm = next(iter(runtime._warm_workers.values()))
             if expired:
                 warm.last_used -= 600
-            second = executor.submit(runtime.run_feature, "whisper", {}, timeout=4)
-            second_result = second.result(timeout=2)
+            second = executor.submit(second_request)
+            assert second_called.wait(2)
+            assert not second_started.wait(0.2)
             assert not first.done()
             assert warm.alive
         finally:
             gate.touch()
         first_result = first.result(timeout=2)
+        second_result = second.result(timeout=2)
 
-    assert first_result["pid"] != second_result["pid"]
-    third = runtime.run_feature("whisper", {}, timeout=2)
-    assert third == {"pid": first_result["pid"], "count": 2}
+    assert second_result == {"pid": first_result["pid"], "count": 2}
+    assert runtime.run_feature("whisper", {}, timeout=2) == {"pid": first_result["pid"], "count": 3}
 
 
 @pytest.mark.parametrize("failure", ["fail", "crash", "cancel", "timeout"])
-def test_failed_transcription_does_not_stop_sibling_or_retry(
+def test_failed_transcription_restarts_worker_for_waiting_request(
     runtime: LocalRuntimeManager, tmp_path: Path, failure: str
 ) -> None:
-    started, sibling_started = Event(), Event()
-    gate, sibling_gate = tmp_path / "release", tmp_path / "release-sibling"
+    started, second_called, second_started = Event(), Event(), Event()
+    gate = tmp_path / "release"
     token = CancellationToken()
-    request = {"gate": str(gate), failure: True}
+
+    def second_request():
+        second_called.set()
+        return runtime.run_feature("whisper", {}, progress=lambda *_: second_started.set(), timeout=4)
+
     with ThreadPoolExecutor(max_workers=2) as executor:
         first = executor.submit(
-            runtime.run_feature, "whisper", request,
+            runtime.run_feature, "whisper", {"gate": str(gate), failure: True},
             progress=lambda *_: started.set(), cancellation_token=token,
             timeout=0.5 if failure == "timeout" else 4,
         )
         try:
             assert started.wait(2)
-            sibling = executor.submit(
-                runtime.run_feature, "whisper", {"gate": str(sibling_gate)},
-                progress=lambda *_: sibling_started.set(), timeout=4,
-            )
-            assert sibling_started.wait(2)
+            old_pid = next(iter(runtime._warm_workers.values())).process.pid
+            second = executor.submit(second_request)
+            assert second_called.wait(2)
+            assert not second_started.wait(0.1)
             if failure == "cancel":
                 token.cancel()
             elif failure != "timeout":
@@ -97,13 +106,13 @@ def test_failed_transcription_does_not_stop_sibling_or_retry(
             expected = TaskCancelledError if failure == "cancel" else LocalRuntimeError
             with pytest.raises(expected):
                 first.result(timeout=2)
-            assert not sibling.done()
-            retry = runtime.run_feature("whisper", {}, timeout=2)
-            assert retry["count"] == 1
+            result = second.result(timeout=2)
         finally:
             gate.touch()
-            sibling_gate.touch()
-        assert sibling.result(timeout=2)["pid"] != retry["pid"]
+
+    assert result["pid"] != old_pid
+    assert result["count"] == 1
+    assert runtime.run_feature("whisper", {}, timeout=2) == {"pid": result["pid"], "count": 2}
 
 
 def test_cancelled_request_does_not_stop_busy_worker(
@@ -127,44 +136,6 @@ def test_cancelled_request_does_not_stop_busy_worker(
         assert first.result(timeout=2)["count"] == 1
 
 
-@pytest.mark.parametrize("failure", ["fail", "crash", "cancel", "timeout"])
-def test_parallel_failure_does_not_discard_busy_warm_worker(
-    runtime: LocalRuntimeManager, tmp_path: Path, failure: str
-) -> None:
-    started, parallel_started = Event(), Event()
-    gate, parallel_gate = tmp_path / "release", tmp_path / "release-parallel"
-    token = CancellationToken()
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        first = executor.submit(
-            runtime.run_feature, "whisper", {"gate": str(gate)},
-            progress=lambda *_: started.set(), timeout=4,
-        )
-        try:
-            assert started.wait(2)
-            warm = next(iter(runtime._warm_workers.values()))
-            parallel = executor.submit(
-                runtime.run_feature, "whisper", {"gate": str(parallel_gate), failure: True},
-                progress=lambda *_: parallel_started.set(), cancellation_token=token,
-                timeout=0.5 if failure == "timeout" else 4,
-            )
-            assert parallel_started.wait(2)
-            if failure == "cancel":
-                token.cancel()
-            elif failure != "timeout":
-                parallel_gate.touch()
-            expected = TaskCancelledError if failure == "cancel" else LocalRuntimeError
-            with pytest.raises(expected):
-                parallel.result(timeout=2)
-            assert warm.alive
-            assert not first.done()
-            assert next(iter(runtime._warm_workers.values())) is warm
-        finally:
-            gate.touch()
-            parallel_gate.touch()
-        first_result = first.result(timeout=2)
-    assert runtime.run_feature("whisper", {}, timeout=2)["pid"] == first_result["pid"]
-
-
 def test_waiting_request_can_be_cancelled_without_stopping_active_work(
     runtime: LocalRuntimeManager, tmp_path: Path
 ) -> None:
@@ -180,7 +151,7 @@ def test_waiting_request_can_be_cancelled_without_stopping_active_work(
             warm = next(iter(runtime._warm_workers.values()))
             token = CancellationToken()
             waiting = executor.submit(
-                warm.request, {}, progress=None, cancellation_token=token, timeout=2,
+                runtime.run_feature, "whisper", {}, cancellation_token=token, timeout=2,
             )
             token.cancel()
             with pytest.raises(TaskCancelledError):
@@ -189,3 +160,20 @@ def test_waiting_request_can_be_cancelled_without_stopping_active_work(
         finally:
             gate.touch()
         assert first.result(timeout=2)["count"] == 1
+
+
+def test_audio_runtime_runs_while_transcription_is_busy(runtime: LocalRuntimeManager, tmp_path: Path) -> None:
+    started = Event()
+    gate = tmp_path / "release"
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        first = executor.submit(
+            runtime.run_feature, "whisper", {"gate": str(gate)},
+            progress=lambda *_: started.set(), timeout=4,
+        )
+        try:
+            assert started.wait(2)
+            audio = runtime.run_feature("deepfilter", {}, timeout=2)
+            assert not first.done()
+        finally:
+            gate.touch()
+        assert first.result(timeout=2)["pid"] != audio["pid"]

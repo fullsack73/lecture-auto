@@ -11,7 +11,7 @@ scripts/build_macos_app.sh --install
 open "/Applications/Lecture Auto.app"
 ```
 
-Without `--install`, the result remains at `build/macos/LectureAuto.app`. The script builds verified ARM64 FFmpeg/FFprobe binaries from pinned sources, applies an ad-hoc signature, and does not create a Developer ID-signed or notarized release.
+Without `--install`, the result remains at `build/macos/Lecture Auto.app`. The script builds verified ARM64 FFmpeg/FFprobe binaries from pinned sources, applies an ad-hoc signature, and does not create a Developer ID-signed or notarized release.
 
 ## Windows (x86_64)
 

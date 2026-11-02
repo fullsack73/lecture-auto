@@ -94,7 +94,7 @@ Applications에 설치하지 않고 빌드 결과만 확인하려면 `--install`
 
 ```bash
 scripts/build_macos_app.sh
-open build/macos/LectureAuto.app
+open "build/macos/Lecture Auto.app"
 ```
 
 첫 FFmpeg/Nuitka 빌드는 시간이 걸릴 수 있다. 스크립트는 ARM64 FFmpeg/FFprobe를 소스에서 준비하고 앱에 포함하며, 결과 앱에 로컬 실행용 ad-hoc 서명을 적용한다. 이 앱은 Developer ID 서명이나 Apple 공증을 거친 공개 배포본이 아니므로 본인이 빌드한 Mac에서 사용하는 경로를 기준으로 한다.

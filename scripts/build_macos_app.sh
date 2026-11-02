@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PYTHON="${PYTHON:-$ROOT/.venv/bin/python}"
-BUILD_DIR="${BUILD_DIR:-$ROOT/build/macos}"
+BUILD_DIR="$ROOT/build/macos"
 SOURCE="$ROOT/src/lecture_auto/gui/LectureAuto.py"
 WORKER="$ROOT/src/lecture_auto/local_ai_worker.py"
 GEMINI_WORKER="$ROOT/src/lecture_auto/gemini_addon_worker.py"
@@ -17,7 +17,8 @@ FFMPEG="$FFMPEG_ROOT/bin/ffmpeg"
 FFPROBE="$FFMPEG_ROOT/bin/ffprobe"
 ICON_PNG="$ROOT/src/lecture_auto/gui/assets/app-icon.png"
 ICON_ICNS="$ROOT/src/lecture_auto/gui/assets/LectureAuto.icns"
-APP="$BUILD_DIR/LectureAuto.app"
+NUITKA_APP="$BUILD_DIR/LectureAuto.app"
+APP="$BUILD_DIR/Lecture Auto.app"
 INSTALL_APP="/Applications/Lecture Auto.app"
 INSTALLER="$ROOT/scripts/install_macos_app.py"
 
@@ -62,6 +63,8 @@ APP_VERSION="$("$PYTHON" "$ROOT/scripts/project_version.py")"
 if [[ "${1:-}" == "--install" ]]; then
   "$PYTHON" "$INSTALLER" check "$INSTALL_APP"
 fi
+"$PYTHON" "$INSTALLER" check "$APP"
+"$PYTHON" "$INSTALLER" check "$NUITKA_APP"
 
 "$ROOT/scripts/prepare_ffmpeg_macos.sh"
 
@@ -74,7 +77,7 @@ mkdir -p "$BUILD_DIR"
 STARTED_AT="$(date +%s)"
 PREVIOUS_KB="$(du -sk "$BUILD_DIR" 2>/dev/null | awk '{print $1}' || print 0)"
 rm -rf "$BUILD_DIR/app.build" "$BUILD_DIR/app.dist" "$BUILD_DIR/app.app" \
-  "$BUILD_DIR/LectureAuto.build" "$BUILD_DIR/LectureAuto.dist" "$BUILD_DIR/LectureAuto.app"
+  "$BUILD_DIR/LectureAuto.build" "$BUILD_DIR/LectureAuto.dist" "$NUITKA_APP" "$APP"
 
 # Nuitka's bundled ccache 4.2.1 is x86_64-only on this machine and causes
 # xcrun to launch under Rosetta against arm64 Command Line Tools.
@@ -116,6 +119,9 @@ rm -rf "$BUILD_DIR/app.build" "$BUILD_DIR/app.dist" "$BUILD_DIR/app.app" \
   --include-data-file="$ICON_PNG=assets/app-icon.png" \
   --report="$BUILD_DIR/nuitka-report.xml" \
   --assume-yes-for-downloads
+
+# Keep the distributed bundle name identical to the Applications install target.
+mv "$NUITKA_APP" "$APP"
 
 if [[ ! -x "$APP/Contents/MacOS/LectureAuto" ]]; then
   print -u2 "Build completed without expected app executable: $APP"
