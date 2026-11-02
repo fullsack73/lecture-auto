@@ -147,6 +147,29 @@ def probe() -> dict[str, Any]:
     }
 
 
+def _decode_whisper_audio(request: dict[str, Any]) -> Any:
+    """Decode outside PyAV, whose audio FIFO can crash the worker."""
+    import numpy as np
+
+    with tempfile.TemporaryDirectory(prefix="lecture-auto-audio-") as directory:
+        output = Path(directory) / "audio.pcm"
+        command = [
+            str(request.get("ffmpeg_path") or "ffmpeg"), "-nostdin", "-v", "error",
+            "-i", str(request["audio_path"]), "-f", "s16le", "-acodec", "pcm_s16le",
+            "-ac", "1", "-ar", "16000", str(output),
+        ]
+        try:
+            result = subprocess.run(command, capture_output=True, text=True, check=False)
+        except OSError as exc:
+            raise RuntimeError(f"FFmpeg audio decoding failed: {exc}") from exc
+        if result.returncode:
+            raise RuntimeError(f"FFmpeg audio decoding failed: {result.stderr.strip()[-2000:]}")
+        samples = np.fromfile(output, dtype="<i2")
+        if not samples.size:
+            raise ValueError("Audio decoding produced no samples.")
+        return samples.astype(np.float32) / 32768.0
+
+
 def whisper(request: dict[str, Any]) -> dict[str, Any]:
     started_at = time.perf_counter()
     emit("progress", stage="loading_model", completed=0, total=3, message="Loading Whisper model")
@@ -246,6 +269,7 @@ def whisper(request: dict[str, Any]) -> dict[str, Any]:
     if request.get("hotwords"):
         transcribe_kwargs["hotwords"] = str(request["hotwords"])
 
+    audio = _decode_whisper_audio(request)
     requested_batch_size = int(request.get("batch_size") or 1)
     if requested_batch_size > 1 and not transcribe_kwargs["vad_filter"]:
         raise ValueError("Batched Whisper transcription requires vad_filter=true")
@@ -265,7 +289,7 @@ def whisper(request: dict[str, Any]) -> dict[str, Any]:
         text_parts = []
         try:
             raw_segments, info = transcriber.transcribe(
-                str(request["audio_path"]),
+                audio,
                 **attempt_kwargs,
             )
             duration = float(getattr(info, "duration", 0) or 0)
@@ -360,6 +384,7 @@ def whisper(request: dict[str, Any]) -> dict[str, Any]:
                 runtime,
                 request,
                 retry_windows,
+                audio=audio,
                 language=getattr(info, "language", None) or request.get("language"),
             )
 
@@ -553,6 +578,7 @@ def _transcribe_retry_windows(
     request: dict[str, Any],
     windows: list[tuple[float, float]],
     *,
+    audio: Any,
     language: str | None,
 ) -> list[dict[str, Any]]:
     runtime = _retry_runtime(primary_runtime, request)
@@ -577,7 +603,7 @@ def _transcribe_retry_windows(
     for index, (start, end) in enumerate(windows, start=1):
         attempt = dict(kwargs)
         attempt["clip_timestamps"] = f"{start:.3f},{end:.3f}"
-        raw_segments, _info = runtime.transcribe(str(request["audio_path"]), **attempt)
+        raw_segments, _info = runtime.transcribe(audio, **attempt)
         for segment in raw_segments:
             payload = _segment_payload(segment)
             # Some bindings return clip-relative timestamps; normalize them defensively.

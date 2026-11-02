@@ -49,6 +49,7 @@ def test_whisper_forces_cpu_device(monkeypatch, tmp_path) -> None:
         ),
     )
 
+    monkeypatch.setattr(worker, "_decode_whisper_audio", lambda _request: object())
     result = worker.whisper(
         {
             "audio_path": str(tmp_path / "audio.wav"),
@@ -119,6 +120,7 @@ def test_whisper_uses_auto_cuda_batch_vad_and_preserves_confidence(
     monkeypatch.setitem(sys.modules, "faster_whisper", fake_faster_whisper)
     monkeypatch.setitem(sys.modules, "ctranslate2", fake_ctranslate2)
 
+    monkeypatch.setattr(worker, "_decode_whisper_audio", lambda _request: object())
     result = worker.whisper(
         {
             "audio_path": str(tmp_path / "audio.wav"),
@@ -191,6 +193,7 @@ def test_whisper_retries_smaller_batch_after_memory_error(
         ),
     )
 
+    monkeypatch.setattr(worker, "_decode_whisper_audio", lambda _request: object())
     result = worker.whisper(
         {
             "audio_path": str(tmp_path / "audio.wav"),
@@ -207,3 +210,34 @@ def test_whisper_retries_smaller_batch_after_memory_error(
     assert result["metadata"]["requested_batch_size"] == 4
     assert result["metadata"]["batch_size"] == 2
     assert result["metadata"]["batch_retry_count"] == 1
+
+
+def test_decode_whisper_audio_uses_ffmpeg_and_returns_mono_samples(tmp_path) -> None:
+    import shutil
+    import struct
+    import wave
+    import pytest
+
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        pytest.skip("ffmpeg is not available")
+    source = tmp_path / "input.wav"
+    with wave.open(str(source), "wb") as audio:
+        audio.setnchannels(1)
+        audio.setsampwidth(2)
+        audio.setframerate(16000)
+        audio.writeframes(struct.pack("<hhh", -32768, 0, 16384))
+
+    samples = worker._decode_whisper_audio({"audio_path": str(source), "ffmpeg_path": ffmpeg})
+    assert samples.tolist() == [-1.0, 0.0, 0.5]
+
+
+def test_decode_whisper_audio_reports_ffmpeg_failure(tmp_path) -> None:
+    import shutil
+    import pytest
+
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        pytest.skip("ffmpeg is not available")
+    with pytest.raises(RuntimeError, match="FFmpeg audio decoding failed"):
+        worker._decode_whisper_audio({"audio_path": str(tmp_path / "missing.wav"), "ffmpeg_path": ffmpeg})

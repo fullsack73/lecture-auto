@@ -38,6 +38,7 @@ GUI 설정 화면은 콤보·체크·숫자 변경을 짧게 debounce한 뒤 자
 - STT는 API(`Deepgram`, OpenAI-compatible)와 local(`faster-whisper`)을 adapter로 분리한다.
 - local faster-whisper의 device/compute/batch/VAD/beam/thread 설정은 `STTConfig`와
   worker request를 거친다. 앱 프로세스는 CTranslate2/faster-whisper를 직접 import하지 않는다.
+  로컬 전사는 앱의 FFmpeg로 16kHz 단일 채널 PCM을 디코딩해 Whisper에 전달하고, 재전사에도 같은 오디오를 재사용한다.
 - `device=auto`, `compute_type=auto`는 worker가 실제 CTranslate2 capability를 조회해
   선택한다. CUDA 초기화 실패는 CPU로 숨겨서 fallback하지 않고 해결 방법과 함께 실패시킨다.
 - batch inference는 VAD가 켜진 경우만 허용한다. 메모리 부족이면 batch를 절반씩 줄여

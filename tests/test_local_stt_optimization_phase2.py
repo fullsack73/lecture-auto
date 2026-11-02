@@ -212,6 +212,7 @@ def test_worker_quality_retry_is_bounded_and_reuses_loaded_model(
     tmp_path: Path,
 ) -> None:
     calls: list[dict[str, object]] = []
+    audio_inputs: list[object] = []
 
     class FakeWhisperModel:
         def __init__(self, _model_source, **_kwargs) -> None:
@@ -219,6 +220,7 @@ def test_worker_quality_retry_is_bounded_and_reuses_loaded_model(
 
         def transcribe(self, _audio_path, **kwargs):
             calls.append(kwargs)
+            audio_inputs.append(_audio_path)
             if "clip_timestamps" in kwargs:
                 segment = SimpleNamespace(
                     text=" 교정 ",
@@ -273,6 +275,7 @@ def test_worker_quality_retry_is_bounded_and_reuses_loaded_model(
         ),
     )
 
+    monkeypatch.setattr(worker, "_decode_whisper_audio", lambda _request: object())
     result = worker.whisper(
         {
             "audio_path": str(tmp_path / "audio.wav"),
@@ -290,6 +293,7 @@ def test_worker_quality_retry_is_bounded_and_reuses_loaded_model(
     assert len(result["retry_windows"]) == 1
     assert result["retry_segments"][0]["text"] == "교정"
     assert "clip_timestamps" in calls[1]
+    assert audio_inputs[0] is audio_inputs[1]
 
 
 def test_session_refine_passes_asr_evidence_and_writes_audit(tmp_path: Path) -> None:

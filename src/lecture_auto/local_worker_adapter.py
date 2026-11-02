@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from lecture_auto.capture_runtime import resolve_ffmpeg_bin
 from lecture_auto.local_runtime import (
     LocalRuntimeError,
     LocalRuntimeManager,
@@ -52,6 +53,7 @@ class WorkerWhisperSTTRuntimeAdapter:
                 {
                     "action": "whisper",
                     "audio_path": str(Path(audio_path).resolve()),
+                    "ffmpeg_path": resolve_ffmpeg_bin(),
                     "model": model,
                     "model_path": str(legacy_model_path) if legacy_model_path.is_dir() else None,
                     "download_root": str(model_root),
