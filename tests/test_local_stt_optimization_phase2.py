@@ -278,7 +278,7 @@ def test_worker_quality_retry_is_bounded_and_reuses_loaded_model(
     )
 
     audio = np.zeros(160000, dtype=np.float32)
-    monkeypatch.setattr(worker, "_decode_whisper_audio", lambda _request: audio)
+    monkeypatch.setattr(worker, "_decode_whisper_audio", lambda _request: (audio, "pyav"))
     result = worker.whisper(
         {
             "audio_path": str(tmp_path / "audio.wav"),

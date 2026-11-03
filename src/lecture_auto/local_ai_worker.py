@@ -37,6 +37,62 @@ _WHISPER_MODELS: OrderedDict[tuple[object, ...], Any] = OrderedDict()
 _MAX_CACHED_WHISPER_MODELS = 2
 _LANGUAGE_CONFIDENCE_THRESHOLD = 0.8
 
+PYAV_DECODE_SCRIPT = r'''
+import os
+import sys
+import threading
+
+def watch_parent():
+    os.read(sys.stdin.fileno(), 1)
+    os._exit(1)
+threading.Thread(target=watch_parent, daemon=True).start()
+
+import io
+import av
+import numpy as np
+
+output = io.BytesIO()
+fifo = None
+resampler = None
+signature = None
+
+def write_resampled(frame):
+    for converted in resampler.resample(frame):
+        output.write(converted.to_ndarray().tobytes())
+
+def flush_group():
+    if fifo.samples:
+        write_resampled(fifo.read())
+    write_resampled(None)
+
+with av.open(sys.argv[1], mode="r", metadata_errors="ignore") as container:
+    frames = iter(container.decode(audio=0))
+    while True:
+        try:
+            frame = next(frames)
+        except StopIteration:
+            break
+        except av.error.InvalidDataError:
+            continue
+        current = (frame.format.name, frame.layout.name, frame.sample_rate)
+        if current != signature:
+            if fifo is not None:
+                flush_group()
+            fifo = av.audio.fifo.AudioFifo()
+            resampler = av.audio.resampler.AudioResampler(format="s16", layout="mono", rate=16000)
+            signature = current
+        frame.pts = None
+        fifo.write(frame)
+        if fifo.samples >= 500000:
+            write_resampled(fifo.read())
+if fifo is not None:
+    flush_group()
+samples = np.frombuffer(output.getbuffer(), dtype=np.int16).astype(np.float32) / 32768.0
+if not samples.size:
+    raise ValueError("Audio decoding produced no samples")
+np.save(sys.argv[2], samples, allow_pickle=False)
+'''
+
 TORCHAUDIO_COMPAT = r'''
 import sys
 import types
@@ -148,11 +204,40 @@ def probe() -> dict[str, Any]:
     }
 
 
-def _decode_whisper_audio(request: dict[str, Any]) -> Any:
-    """Decode outside PyAV, whose audio FIFO can crash the worker."""
+def _decode_whisper_audio(request: dict[str, Any]) -> tuple[Any, str]:
+    """Isolate PyAV crashes and fall back to FFmpeg when decoding fails."""
     import numpy as np
 
     with tempfile.TemporaryDirectory(prefix="lecture-auto-audio-") as directory:
+        pyav_output = Path(directory) / "audio.npy"
+        pyav_command = [
+            sys.executable, "-I", "-X", "utf8", "-c", PYAV_DECODE_SCRIPT,
+            str(request["audio_path"]), str(pyav_output),
+        ]
+        try:
+            process = subprocess.Popen(
+                pyav_command, stdin=subprocess.PIPE,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+            try:
+                return_code = process.wait()
+            finally:
+                if process.stdin:
+                    process.stdin.close()
+                if process.poll() is None:
+                    process.terminate()
+                    process.wait()
+            if return_code == 0:
+                samples = np.load(pyav_output, allow_pickle=False)
+                if samples.ndim == 1 and samples.size and samples.dtype == np.float32:
+                    return samples, "pyav"
+        except (OSError, ValueError, EOFError):
+            pass
+
+        emit(
+            "progress", stage="decoding_audio", completed=None, total=None,
+            message="PyAV decoding failed; retrying with FFmpeg",
+        )
         output = Path(directory) / "audio.pcm"
         command = [
             str(request.get("ffmpeg_path") or "ffmpeg"), "-nostdin", "-v", "error",
@@ -168,7 +253,7 @@ def _decode_whisper_audio(request: dict[str, Any]) -> Any:
         samples = np.fromfile(output, dtype="<i2")
         if not samples.size:
             raise ValueError("Audio decoding produced no samples.")
-        return samples.astype(np.float32) / 32768.0
+        return samples.astype(np.float32) / 32768.0, "ffmpeg"
 
 
 def whisper(request: dict[str, Any]) -> dict[str, Any]:
@@ -270,7 +355,7 @@ def whisper(request: dict[str, Any]) -> dict[str, Any]:
     if request.get("hotwords"):
         transcribe_kwargs["hotwords"] = str(request["hotwords"])
 
-    audio = _decode_whisper_audio(request)
+    audio, audio_decode_backend = _decode_whisper_audio(request)
     language_probability = None
     if not request.get("language"):
         emit(
@@ -413,6 +498,7 @@ def whisper(request: dict[str, Any]) -> dict[str, Any]:
         "retry_windows": [list(window) for window in retry_windows],
         "metadata": {
             "model": model,
+            "audio_decode_backend": audio_decode_backend,
             "requested_device": requested_device,
             "device": device,
             "requested_compute_type": requested_compute_type,

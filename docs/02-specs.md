@@ -45,7 +45,10 @@ GUI의 전사(API/local)와 LLM 작업(전사문 정제·노트 미리보기/저
 - STT는 API(`Deepgram`, OpenAI-compatible)와 local(`faster-whisper`)을 adapter로 분리한다.
 - local faster-whisper의 device/compute/batch/VAD/beam/thread 설정은 `STTConfig`와
   worker request를 거친다. 앱 프로세스는 CTranslate2/faster-whisper를 직접 import하지 않는다.
-  로컬 전사는 앱의 FFmpeg로 16kHz 단일 채널 PCM을 디코딩해 Whisper에 전달하고, 재전사에도 같은 오디오를 재사용한다.
+  로컬 전사는 격리된 프로세스에서 PyAV로 16kHz 단일 채널 오디오를 디코딩한다.
+  프레임의 채널/형식이 변경되면 해당 구간을 마무리하고 리샘플러를 교체해
+  모노 오디오로 이어 붙인다. PyAV 오류·충돌이 발생하면 앱의 FFmpeg로 재시도한다.
+  raw STT metadata에 실제 디코딩 경로를 기록하며 재전사에도 같은 오디오를 재사용한다.
 - `device=auto`, `compute_type=auto`는 worker가 실제 CTranslate2 capability를 조회해
   선택한다. CUDA 초기화 실패는 CPU로 숨겨서 fallback하지 않고 해결 방법과 함께 실패시킨다.
 - batch inference는 VAD가 켜진 경우만 허용한다. 메모리 부족이면 batch를 절반씩 줄여

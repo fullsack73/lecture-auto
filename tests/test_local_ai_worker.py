@@ -49,7 +49,7 @@ def test_whisper_forces_cpu_device(monkeypatch, tmp_path) -> None:
         ),
     )
 
-    monkeypatch.setattr(worker, "_decode_whisper_audio", lambda _request: object())
+    monkeypatch.setattr(worker, "_decode_whisper_audio", lambda _request: (object(), "pyav"))
     result = worker.whisper(
         {
             "audio_path": str(tmp_path / "audio.wav"),
@@ -121,7 +121,7 @@ def test_whisper_uses_auto_cuda_batch_vad_and_preserves_confidence(
     monkeypatch.setitem(sys.modules, "faster_whisper", fake_faster_whisper)
     monkeypatch.setitem(sys.modules, "ctranslate2", fake_ctranslate2)
 
-    monkeypatch.setattr(worker, "_decode_whisper_audio", lambda _request: object())
+    monkeypatch.setattr(worker, "_decode_whisper_audio", lambda _request: (object(), "pyav"))
     result = worker.whisper(
         {
             "audio_path": str(tmp_path / "audio.wav"),
@@ -196,7 +196,7 @@ def test_whisper_retries_smaller_batch_after_memory_error(
         ),
     )
 
-    monkeypatch.setattr(worker, "_decode_whisper_audio", lambda _request: object())
+    monkeypatch.setattr(worker, "_decode_whisper_audio", lambda _request: (object(), "pyav"))
     result = worker.whisper(
         {
             "audio_path": str(tmp_path / "audio.wav"),
@@ -216,7 +216,7 @@ def test_whisper_retries_smaller_batch_after_memory_error(
     assert result["metadata"]["batch_retry_count"] == 1
 
 
-def test_decode_whisper_audio_uses_ffmpeg_and_returns_mono_samples(tmp_path) -> None:
+def test_decode_whisper_audio_uses_pyav_and_returns_mono_samples(tmp_path) -> None:
     import shutil
     import struct
     import wave
@@ -232,7 +232,8 @@ def test_decode_whisper_audio_uses_ffmpeg_and_returns_mono_samples(tmp_path) -> 
         audio.setframerate(16000)
         audio.writeframes(struct.pack("<hhh", -32768, 0, 16384))
 
-    samples = worker._decode_whisper_audio({"audio_path": str(source), "ffmpeg_path": ffmpeg})
+    samples, backend = worker._decode_whisper_audio({"audio_path": str(source), "ffmpeg_path": ffmpeg})
+    assert backend == "pyav"
     assert samples.tolist() == [-1.0, 0.0, 0.5]
 
 
@@ -245,3 +246,85 @@ def test_decode_whisper_audio_reports_ffmpeg_failure(tmp_path) -> None:
         pytest.skip("ffmpeg is not available")
     with pytest.raises(RuntimeError, match="FFmpeg audio decoding failed"):
         worker._decode_whisper_audio({"audio_path": str(tmp_path / "missing.wav"), "ffmpeg_path": ffmpeg})
+
+
+def test_decode_falls_back_after_pyav_child_crash(monkeypatch, tmp_path) -> None:
+    import shutil
+    import struct
+    import wave
+    import pytest
+
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        pytest.skip("ffmpeg is not available")
+    source = tmp_path / "input.wav"
+    with wave.open(str(source), "wb") as audio:
+        audio.setnchannels(1)
+        audio.setsampwidth(2)
+        audio.setframerate(16000)
+        audio.writeframes(struct.pack("<hhh", -32768, 0, 16384))
+    monkeypatch.setattr(worker, "PYAV_DECODE_SCRIPT", "import os; os._exit(139)")
+    samples, backend = worker._decode_whisper_audio({"audio_path": str(source), "ffmpeg_path": ffmpeg})
+    assert backend == "ffmpeg"
+    assert samples.tolist() == [-1.0, 0.0, 0.5]
+
+
+def test_pyav_child_exits_when_parent_pipe_closes() -> None:
+    import subprocess
+
+    script = worker.PYAV_DECODE_SCRIPT.replace(
+        "import numpy as np",
+        "print('ready', flush=True)\nimport time; time.sleep(60)\nimport numpy as np",
+        1,
+    )
+    process = subprocess.Popen(
+        [sys.executable, "-I", "-c", script],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+    )
+    try:
+        assert process.stdout.readline() == b"ready\n"
+        process.stdin.close()
+        assert process.wait(timeout=5) == 1
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait()
+        process.stdout.close()
+        process.stderr.close()
+
+
+def test_channel_layout_change_is_normalized_without_losing_audio(monkeypatch, tmp_path) -> None:
+    import av
+    import numpy as np
+    import shutil
+    import subprocess
+    import pytest
+
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        pytest.skip("ffmpeg is not available")
+    parts = []
+    for index, layout in enumerate(("stereo", "mono", "stereo")):
+        part = tmp_path / f"{index}-{layout}.mp3"
+        subprocess.run([
+            ffmpeg, "-nostdin", "-v", "error", "-f", "lavfi", "-i",
+            "sine=frequency=440:sample_rate=48000", "-t", "0.5", "-ac",
+            "2" if layout == "stereo" else "1", "-c:a", "libmp3lame",
+            "-write_xing", "0", "-id3v2_version", "0", str(part),
+        ], check=True)
+        parts.append(part.read_bytes())
+    source = tmp_path / "changing.mp3"
+    source.write_bytes(b"".join(parts))
+    samples, backend = worker._decode_whisper_audio({"audio_path": str(source), "ffmpeg_path": ffmpeg})
+    assert backend == "pyav"
+    assert len(samples) > 10000
+    with av.open(str(source)) as container:
+        expected_samples = sum(frame.samples / frame.sample_rate for frame in container.decode(audio=0)) * 16000
+    assert abs(len(samples) - round(expected_samples)) <= 1
+    midpoint = len(samples) // 2
+    assert np.sqrt(np.mean(samples[:midpoint] ** 2)) > 0.01
+    assert np.sqrt(np.mean(samples[midpoint:] ** 2)) > 0.01
+    monkeypatch.setattr(worker, "PYAV_DECODE_SCRIPT", "import os; os._exit(139)")
+    reference, backend = worker._decode_whisper_audio({"audio_path": str(source), "ffmpeg_path": ffmpeg})
+    assert backend == "ffmpeg"
+    assert abs(len(samples) - len(reference)) <= 64

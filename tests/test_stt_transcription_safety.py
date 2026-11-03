@@ -88,7 +88,7 @@ def test_worker_uses_speech_language_but_does_not_force_uncertain_language_on_re
     monkeypatch.setitem(sys.modules, "ctranslate2", SimpleNamespace(
         get_supported_compute_types=lambda _device: {"int8"}, get_cuda_device_count=lambda: 0,
     ))
-    monkeypatch.setattr(worker, "_decode_whisper_audio", lambda _request: audio)
+    monkeypatch.setattr(worker, "_decode_whisper_audio", lambda _request: (audio, "pyav"))
     monkeypatch.setattr(worker, "_detect_whisper_language", lambda _runtime, _audio: ("en", probability))
     monkeypatch.setattr(worker, "_transcribe_retry_windows", retry)
     monkeypatch.setattr(worker, "emit", lambda *_args, **_kwargs: None)
