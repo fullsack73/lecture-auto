@@ -79,12 +79,12 @@ python3.11 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -e '.[build]'
-scripts/build_macos_app.sh --install
+PYTHON=.venv/bin/python UV=.venv/bin/uv scripts/build_macos_app.sh --install
 ```
 
 성공하면 실행 smoke test와 서명 검증을 통과한 앱이 `/Applications/Lecture Auto.app`에 설치된다. 복사나 검증이 실패하면 기존 설치본은 유지된다.
 
-macOS 패키지는 Python 3.11에서만 검증된다. 스크립트가 다른 Python을 감지하면 빌드 파일이나 기존 설치본을 건드리기 전에 종료한다. `python3.11` 명령이 없다면 Python 3.11을 먼저 설치한다.
+다른 가상환경이 활성화돼 있더라도 이 환경을 사용하도록 위 명령에서 `.venv`를 명시한다. macOS 패키지는 Python 3.11에서만 검증된다. 스크립트가 다른 Python을 감지하면 빌드 파일이나 기존 설치본을 건드리기 전에 종료한다. `python3.11` 명령이 없다면 Python 3.11을 먼저 설치한다.
 
 ```bash
 open "/Applications/Lecture Auto.app"
@@ -93,7 +93,7 @@ open "/Applications/Lecture Auto.app"
 Applications에 설치하지 않고 빌드 결과만 확인하려면 `--install` 없이 실행한다.
 
 ```bash
-scripts/build_macos_app.sh
+PYTHON=.venv/bin/python UV=.venv/bin/uv scripts/build_macos_app.sh
 open "build/macos/Lecture Auto.app"
 ```
 

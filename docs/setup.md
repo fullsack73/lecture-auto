@@ -81,12 +81,12 @@ python3.11 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -e '.[build]'
-scripts/build_macos_app.sh --install
+PYTHON=.venv/bin/python UV=.venv/bin/uv scripts/build_macos_app.sh --install
 ```
 
 After the GUI smoke launch and signature verification pass, the app is available at `/Applications/Lecture Auto.app`. A copy or verification failure leaves the previous installation intact.
 
-The macOS package is validated only with Python 3.11. If the script detects another Python version, it exits before touching build artifacts or the installed app. Install Python 3.11 first if `python3.11` is unavailable.
+The commands above explicitly select `.venv`, even if another environment is active. The macOS package is validated only with Python 3.11. If the script detects another Python version, it exits before touching build artifacts or the installed app. Install Python 3.11 first if `python3.11` is unavailable.
 
 ```bash
 open "/Applications/Lecture Auto.app"
@@ -95,7 +95,7 @@ open "/Applications/Lecture Auto.app"
 To build without installing into Applications, omit `--install`:
 
 ```bash
-scripts/build_macos_app.sh
+PYTHON=.venv/bin/python UV=.venv/bin/uv scripts/build_macos_app.sh
 open "build/macos/Lecture Auto.app"
 ```
 

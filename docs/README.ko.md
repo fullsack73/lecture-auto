@@ -48,17 +48,19 @@ cd lecture-auto
 
 #### macOS (Apple Silicon)
 
-Xcode Command Line Tools를 먼저 설치한 뒤 앱을 빌드하고 설치한다.
+Xcode Command Line Tools와 ARM64 Python 3.11을 설치한다. 녹음과 작업을 보호하기 위해 빌드 또는 설치 전에 Lecture Auto를 종료한다. 그다음 앱을 빌드하고 설치한다.
 
 ```bash
 xcode-select --install  # Command Line Tools가 이미 있으면 생략
-python3 -m venv .venv
+python3.11 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -e '.[build]'
-scripts/build_macos_app.sh --install
+PYTHON=.venv/bin/python UV=.venv/bin/uv scripts/build_macos_app.sh --install
 open "/Applications/Lecture Auto.app"
 ```
+
+`.venv`에 빌드 의존성이 이미 설치돼 있다면 마지막 빌드 명령만 실행하면 된다. 다른 가상환경이 활성화돼 있더라도 이 환경을 사용하도록 경로를 명시한다. 설치하지 않고 빌드만 하려면 `--install`을 빼면 된다. 결과는 `build/macos/Lecture Auto.app`에 생성된다.
 
 빌드는 ARM64 FFmpeg/FFprobe를 앱에 포함하고 로컬 실행용 ad-hoc 서명을 적용한다. Developer ID 서명이나 Apple 공증을 거친 공개 배포본은 아니다. 요구사항과 문제 해결은 [macOS 빌드 가이드](setup.ko.md#macos-데스크톱-앱-로컬-빌드)를 참고한다.
 

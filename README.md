@@ -48,7 +48,7 @@ Install the documented Python version and the Rust toolchain before building. De
 
 #### macOS (Apple silicon)
 
-Install Xcode Command Line Tools first. Then build and install the app:
+Install Xcode Command Line Tools and ARM64 Python 3.11 first. Close Lecture Auto before building or installing, so active recordings and jobs are not interrupted. Then build and install the app:
 
 ```bash
 xcode-select --install  # Skip if Command Line Tools are already installed.
@@ -56,9 +56,11 @@ python3.11 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -e '.[build]'
-scripts/build_macos_app.sh --install
+PYTHON=.venv/bin/python UV=.venv/bin/uv scripts/build_macos_app.sh --install
 open "/Applications/Lecture Auto.app"
 ```
+
+If `.venv` already has the build dependencies installed, run the final build command directly. The explicit paths ensure the script uses that environment even when another environment is active. To build without installing, omit `--install`; the output is `build/macos/Lecture Auto.app`.
 
 The build bundles ARM64 FFmpeg/FFprobe and applies an ad-hoc signature for local use. It is not a Developer ID-signed or notarized public release. See [the macOS build guide](docs/setup.md#build-the-macos-desktop-app-locally) for requirements and troubleshooting.
 
