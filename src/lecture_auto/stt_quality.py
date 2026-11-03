@@ -173,16 +173,27 @@ def merge_retry_segments(
     if not retry or not windows:
         return list(primary)
 
-    def in_windows(segment: DiarizedSegment) -> bool:
+    def in_window(segment: DiarizedSegment, start: float, end: float) -> bool:
         midpoint = (segment.start_time + segment.end_time) / 2
-        return any(start <= midpoint <= end for start, end in windows)
+        return start <= midpoint <= end
 
-    kept = [segment for segment in primary if not in_windows(segment)]
-    accepted_retry = [
-        segment
-        for segment in retry
-        if in_windows(segment) and segment.text.strip()
-    ]
+    replaced: set[int] = set()
+    accepted_retry: list[DiarizedSegment] = []
+    for start, end in windows:
+        indices = [
+            index for index, segment in enumerate(primary)
+            if in_window(segment, start, end)
+        ]
+        original = [primary[index] for index in indices]
+        candidate = [
+            segment for segment in retry
+            if in_window(segment, start, end) and segment.text.strip()
+        ]
+        if not _retry_is_better(original, candidate, start, end):
+            continue
+        replaced.update(indices)
+        accepted_retry.extend(candidate)
+    kept = [segment for index, segment in enumerate(primary) if index not in replaced]
     combined = sorted(
         [*kept, *accepted_retry],
         key=lambda segment: (segment.start_time, segment.end_time),
@@ -199,6 +210,45 @@ def merge_retry_segments(
             continue
         deduplicated.append(segment)
     return deduplicated
+
+
+def _retry_is_better(
+    primary: Sequence[DiarizedSegment],
+    retry: Sequence[DiarizedSegment],
+    start: float,
+    end: float,
+) -> bool:
+    if not primary or not retry or assess_stt_quality(retry)["suspect_segment_count"]:
+        return False
+    if any(
+        segment.start_time < start - 1 / 16000
+        or segment.end_time > end + 1 / 16000
+        or segment.end_time <= segment.start_time
+        for segment in retry
+    ):
+        return False
+    if any(
+        not any(
+            candidate.end_time > segment.start_time and candidate.start_time < segment.end_time
+            for candidate in retry
+        )
+        for segment in primary if segment.text.strip()
+    ):
+        return False
+    original_length = sum(len(_normalized_characters(segment.text)) for segment in primary)
+    retry_length = sum(len(_normalized_characters(segment.text)) for segment in retry)
+    # A confident short hallucination must not erase a much longer passage.
+    if retry_length < original_length * 0.5:
+        return False
+
+    def score(segments: Sequence[DiarizedSegment]) -> float:
+        durations = [max(0.01, segment.end_time - segment.start_time) for segment in segments]
+        return sum(
+            _segment_quality_score(segment) * duration
+            for segment, duration in zip(segments, durations)
+        ) / sum(durations)
+
+    return score(retry) > score(primary)
 
 
 def _segment_quality_score(segment: DiarizedSegment) -> float:

@@ -54,6 +54,7 @@ def test_whisper_forces_cpu_device(monkeypatch, tmp_path) -> None:
         {
             "audio_path": str(tmp_path / "audio.wav"),
             "model": "base",
+            "language": "en",
             "compute_type": "int8",
         }
     )
@@ -125,6 +126,7 @@ def test_whisper_uses_auto_cuda_batch_vad_and_preserves_confidence(
         {
             "audio_path": str(tmp_path / "audio.wav"),
             "model": "base",
+            "language": "ko",
             "device": "auto",
             "compute_type": "auto",
             "batch_size": 4,
@@ -140,6 +142,7 @@ def test_whisper_uses_auto_cuda_batch_vad_and_preserves_confidence(
 
     assert created["kwargs"] == {"device": "cuda", "compute_type": "float16"}
     assert created["transcribe_kwargs"] == {
+        "language": "ko",
         "beam_size": 1,
         "temperature": 0.0,
         "vad_filter": True,
@@ -198,6 +201,7 @@ def test_whisper_retries_smaller_batch_after_memory_error(
         {
             "audio_path": str(tmp_path / "audio.wav"),
             "model": "base",
+            "language": "ko",
             "device": "cpu",
             "compute_type": "int8",
             "batch_size": 4,

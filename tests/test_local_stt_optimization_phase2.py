@@ -211,6 +211,8 @@ def test_worker_quality_retry_is_bounded_and_reuses_loaded_model(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
+    import numpy as np
+
     calls: list[dict[str, object]] = []
     audio_inputs: list[object] = []
 
@@ -221,7 +223,7 @@ def test_worker_quality_retry_is_bounded_and_reuses_loaded_model(
         def transcribe(self, _audio_path, **kwargs):
             calls.append(kwargs)
             audio_inputs.append(_audio_path)
-            if "clip_timestamps" in kwargs:
+            if len(_audio_path) < 160000:
                 segment = SimpleNamespace(
                     text=" 교정 ",
                     start=0.0,
@@ -275,11 +277,13 @@ def test_worker_quality_retry_is_bounded_and_reuses_loaded_model(
         ),
     )
 
-    monkeypatch.setattr(worker, "_decode_whisper_audio", lambda _request: object())
+    audio = np.zeros(160000, dtype=np.float32)
+    monkeypatch.setattr(worker, "_decode_whisper_audio", lambda _request: audio)
     result = worker.whisper(
         {
             "audio_path": str(tmp_path / "audio.wav"),
             "model": "base",
+            "language": "ko",
             "device": "cpu",
             "compute_type": "int8",
             "batch_size": 1,
@@ -292,8 +296,10 @@ def test_worker_quality_retry_is_bounded_and_reuses_loaded_model(
 
     assert len(result["retry_windows"]) == 1
     assert result["retry_segments"][0]["text"] == "교정"
-    assert "clip_timestamps" in calls[1]
-    assert audio_inputs[0] is audio_inputs[1]
+    assert "clip_timestamps" not in calls[1]
+    assert np.shares_memory(audio_inputs[0], audio_inputs[1])
+    start, end = result["retry_windows"][0]
+    assert len(audio_inputs[1]) == int(end * 16000) - int(start * 16000)
 
 
 def test_session_refine_passes_asr_evidence_and_writes_audit(tmp_path: Path) -> None:

@@ -122,3 +122,34 @@ def test_cancel_all_never_starts_waiting_work(qtbot) -> None:
         release.set()
         qtbot.waitUntil(lambda: jobs.active_count == 0, timeout=3000)
     assert executed == []
+
+
+def test_transcription_and_llm_have_independent_fifo_queues(qtbot) -> None:
+    import threading
+    jobs = JobController()
+    stt_started = threading.Event()
+    llm_started = threading.Event()
+    release_stt = threading.Event()
+    release_llm = threading.Event()
+    order = []
+    def stt(*_args):
+        stt_started.set()
+        release_stt.wait(10)
+    def llm(*_args):
+        llm_started.set()
+        release_llm.wait(10)
+        order.append('first')
+    try:
+        jobs.submit(stt, session_id='lecture', lane='stt')
+        qtbot.waitUntil(stt_started.is_set, timeout=3000)
+        jobs.submit(llm, session_id='other', lane='llm')
+        qtbot.waitUntil(llm_started.is_set, timeout=3000)
+        jobs.submit(lambda *_: order.append('second'), lane='llm')
+        assert order == []
+        release_llm.set()
+        qtbot.waitUntil(lambda: order == ['first', 'second'], timeout=3000)
+        assert not release_stt.is_set()
+    finally:
+        release_llm.set()
+        release_stt.set()
+        qtbot.waitUntil(lambda: jobs.active_count == 0, timeout=5000)

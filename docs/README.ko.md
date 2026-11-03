@@ -246,7 +246,7 @@ STT:
 - local mode는 device/compute/batch/VAD/beam/hotwords와 제한된 저신뢰 구간 재전사를 CLI·TUI·GUI에서 설정
 - raw Markdown 옆 `*-raw.stt.json`에 timestamp/confidence/runtime을 보존
 - 장수 worker가 같은 모델을 재사용하고 idle/unload/취소/비정상 종료 시 정리
-- GUI의 전사·전사문 보정·요약은 요청 순서대로 하나씩 처리. 같은 세션의 후속 작업도 등록 가능
+- GUI의 전사와 LLM 작업은 각각 독립된 대기열에서 요청 순서대로 처리하며 동시에 실행 가능
 - 녹음 시작/중지·오디오 가져오기·볼륨 보정·노이즈 제거는 AI 대기열과 별도로 실행
 - 작업 취소는 대기 중 요청도 취소하며, 개별 작업 실패 후 다음 요청은 계속 실행. 대기열은 앱을 종료하면 사라짐
 - edited transcript 옆 `*.audit.json`에 숫자·고유명사 변경과 diff를 보존

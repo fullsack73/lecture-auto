@@ -35,6 +35,7 @@ PACKAGE_MODULES = {
 
 _WHISPER_MODELS: OrderedDict[tuple[object, ...], Any] = OrderedDict()
 _MAX_CACHED_WHISPER_MODELS = 2
+_LANGUAGE_CONFIDENCE_THRESHOLD = 0.8
 
 TORCHAUDIO_COMPAT = r'''
 import sys
@@ -270,6 +271,14 @@ def whisper(request: dict[str, Any]) -> dict[str, Any]:
         transcribe_kwargs["hotwords"] = str(request["hotwords"])
 
     audio = _decode_whisper_audio(request)
+    language_probability = None
+    if not request.get("language"):
+        emit(
+            "progress", stage="detecting_language", completed=0, total=None,
+            message="Detecting language from speech",
+        )
+        language, language_probability = _detect_whisper_language(runtime, audio)
+        transcribe_kwargs["language"] = language
     requested_batch_size = int(request.get("batch_size") or 1)
     if requested_batch_size > 1 and not transcribe_kwargs["vad_filter"]:
         raise ValueError("Batched Whisper transcription requires vad_filter=true")
@@ -380,12 +389,18 @@ def whisper(request: dict[str, Any]) -> dict[str, Any]:
                 total=len(retry_windows),
                 message=f"Re-transcribing {len(retry_windows)} suspect windows",
             )
+            retry_language = request.get("language")
+            if (
+                language_probability is not None
+                and language_probability >= _LANGUAGE_CONFIDENCE_THRESHOLD
+            ):
+                retry_language = transcribe_kwargs["language"]
             retry_segments = _transcribe_retry_windows(
                 runtime,
                 request,
                 retry_windows,
                 audio=audio,
-                language=getattr(info, "language", None) or request.get("language"),
+                language=retry_language,
             )
 
     emit("progress", stage="complete", completed=3, total=3, message="Transcription complete")
@@ -412,7 +427,12 @@ def whisper(request: dict[str, Any]) -> dict[str, Any]:
                 getattr(info, "duration_after_vad", duration) or 0
             ),
             "language_probability": _optional_float(
-                getattr(info, "language_probability", None)
+                language_probability
+                if language_probability is not None
+                else getattr(info, "language_probability", None)
+            ),
+            "language_detection_source": (
+                "configured" if request.get("language") else "speech_vad"
             ),
             "model_load_seconds": model_loaded_at - started_at,
             "warm_start": warm_start,
@@ -435,6 +455,44 @@ def whisper(request: dict[str, Any]) -> dict[str, Any]:
             "retry_beam_size": int(request.get("quality_retry_beam_size") or 5),
         },
     }
+
+
+def _detect_whisper_language(runtime: Any, audio: Any) -> tuple[str, float]:
+    import numpy as np
+    from faster_whisper.vad import get_speech_timestamps
+
+    remaining = 3 * 30 * 16000
+    samples = []
+    # Bound VAD memory and stop scanning once enough speech has been collected.
+    for offset in range(0, len(audio), 60 * 16000):
+        window = audio[offset:offset + 60 * 16000]
+        for chunk in get_speech_timestamps(window):
+            piece = window[chunk["start"]:chunk["end"]][:remaining]
+            samples.append(piece)
+            remaining -= len(piece)
+            if remaining <= 0:
+                break
+        if remaining <= 0:
+            break
+    if not samples or not any(len(piece) for piece in samples):
+        raise ValueError("No speech detected. Check the recording or set the STT language explicitly.")
+    speech = np.concatenate(samples)
+    detections: list[tuple[str, float]] = []
+    for offset in range(0, len(speech), 30 * 16000):
+        # Language info is eager; leaving the segment generator unconsumed avoids ASR.
+        _segments, info = runtime.transcribe(
+            speech[offset:offset + 30 * 16000], vad_filter=False,
+        )
+        language = info.language
+        probability = float(info.language_probability)
+        detections.append((language, probability))
+        if probability >= _LANGUAGE_CONFIDENCE_THRESHOLD:
+            return language, probability
+    language, _probability = max(
+        detections,
+        key=lambda item: (sum(value[0] == item[0] for value in detections), item[1]),
+    )
+    return language, max(probability for value, probability in detections if value == language)
 
 
 def _optional_float(value: Any) -> float | None:
@@ -601,15 +659,18 @@ def _transcribe_retry_windows(
 
     values: list[dict[str, Any]] = []
     for index, (start, end) in enumerate(windows, start=1):
-        attempt = dict(kwargs)
-        attempt["clip_timestamps"] = f"{start:.3f},{end:.3f}"
-        raw_segments, _info = runtime.transcribe(audio, **attempt)
+        # Crop samples so decoding and VAD cannot read beyond the retry window.
+        start_sample = int(start * 16000)
+        offset = start_sample / 16000
+        window_audio = audio[start_sample:int(end * 16000)]
+        raw_segments, _info = runtime.transcribe(window_audio, **kwargs)
         for segment in raw_segments:
             payload = _segment_payload(segment)
-            # Some bindings return clip-relative timestamps; normalize them defensively.
-            if payload["end_time"] <= end - start + 0.25 and payload["start_time"] < start:
-                payload["start_time"] = float(payload["start_time"]) + start
-                payload["end_time"] = float(payload["end_time"]) + start
+            payload["start_time"] += offset
+            payload["end_time"] += offset
+            for word in payload["words"]:
+                word["start_time"] += offset
+                word["end_time"] += offset
             values.append(payload)
         emit(
             "progress",

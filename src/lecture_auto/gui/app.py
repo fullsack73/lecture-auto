@@ -1050,19 +1050,19 @@ class SessionsPage(QWidget):
         sid = self._require_id()
         if not self.window.ensure_provider_credentials("llm"):
             return
-        self.window.run_background("전사문 refine", sid, lambda token, progress, job: self.window.container.session.transcript_refine(sid, cancellation_token=token, progress_callback=progress, job_id=job))
+        self.window.run_background("전사문 refine", sid, lambda token, progress, job: self.window.container.session.transcript_refine(sid, cancellation_token=token, progress_callback=progress, job_id=job), lane="llm")
 
     def preview_notes(self) -> None:
         sid = self._require_id()
         if not self.window.ensure_provider_credentials("llm"):
             return
-        self.window.run_background("노트 미리보기", sid, lambda token, progress, job: self.window.container.session.summarize_session(sid, preview=True, cancellation_token=token, progress_callback=progress, job_id=job))
+        self.window.run_background("노트 미리보기", sid, lambda token, progress, job: self.window.container.session.summarize_session(sid, preview=True, cancellation_token=token, progress_callback=progress, job_id=job), lane="llm")
 
     def save_notes(self) -> None:
         sid = self._require_id()
         if not self.window.ensure_provider_credentials("llm"):
             return
-        self.window.run_background("노트 저장", sid, lambda token, progress, job: self.window.container.session.summarize_session(sid, preview=False, cancellation_token=token, progress_callback=progress, job_id=job))
+        self.window.run_background("노트 저장", sid, lambda token, progress, job: self.window.container.session.summarize_session(sid, preview=False, cancellation_token=token, progress_callback=progress, job_id=job), lane="llm")
 
     def open_folder(self, kind: str) -> None:
         sid = self._require_id()
@@ -2021,6 +2021,7 @@ class MainWindow(QMainWindow):
         *,
         block_close: bool = True,
         queued: bool = True,
+        lane: str = "stt",
     ) -> None:
         try:
             job_id = self.jobs.submit(
@@ -2028,6 +2029,7 @@ class MainWindow(QMainWindow):
                 session_id=session_id,
                 block_close=block_close,
                 queued=queued,
+                lane=lane,
             )
             self._job_labels[job_id] = label
             self._job_sessions[job_id] = session_id

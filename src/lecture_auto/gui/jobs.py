@@ -51,14 +51,17 @@ class JobController(QObject):
         super().__init__(parent)
         self.pool = QThreadPool(self)
         self.pool.setMaxThreadCount(1)
+        self.llm_pool = QThreadPool(self)
+        self.llm_pool.setMaxThreadCount(1)
         self.audio_pool = QThreadPool(self)
         self._tokens: dict[str, CancellationToken] = {}
         self._sessions: dict[str, str | None] = {}
         self._blocks_close: dict[str, bool] = {}
         self._workers: dict[str, Worker] = {}
-        self._pending: deque[str] = deque()
+        self._pending: dict[str, deque[str]] = {"stt": deque(), "llm": deque()}
         self._serial_jobs: set[str] = set()
-        self._running_job: str | None = None
+        self._running_job: dict[str, str | None] = {"stt": None, "llm": None}
+        self._lanes: dict[str, str] = {}
 
     @property
     def active_count(self) -> int:
@@ -66,7 +69,7 @@ class JobController(QObject):
 
     @property
     def pending_count(self) -> int:
-        return len(self._pending)
+        return sum(len(pending) for pending in self._pending.values())
 
     @property
     def has_close_blocking_jobs(self) -> bool:
@@ -82,7 +85,10 @@ class JobController(QObject):
         session_id: str | None = None,
         block_close: bool = True,
         queued: bool = True,
+        lane: str = "stt",
     ) -> str:
+        if lane not in self._pending:
+            raise ValueError(f"Unknown job lane: {lane}")
         if session_id and any(
             sid == session_id and job_id not in self._serial_jobs
             for job_id, sid in self._sessions.items()
@@ -100,32 +106,36 @@ class JobController(QObject):
         self._workers[job_id] = worker
         if queued:
             self._serial_jobs.add(job_id)
-            self._pending.append(job_id)
+            self._lanes[job_id] = lane
+            self._pending[lane].append(job_id)
         if queued:
-            self._start_next()
+            self._start_next(lane)
         else:
             self.audio_pool.start(worker)
         self.active_changed.emit(self.active_count)
         return job_id
 
-    def _start_next(self) -> None:
-        if self._running_job is None and self._pending:
-            self._running_job = self._pending.popleft()
-            self.pool.start(self._workers[self._running_job])
+    def _start_next(self, lane: str) -> None:
+        if self._running_job[lane] is None and self._pending[lane]:
+            job_id = self._pending[lane].popleft()
+            self._running_job[lane] = job_id
+            (self.pool if lane == "stt" else self.llm_pool).start(self._workers[job_id])
 
     def cancel(self, job_id: str) -> None:
         token = self._tokens.get(job_id)
         if token:
             token.cancel()
-            if job_id in self._pending:
-                self._pending.remove(job_id)
+            lane = self._lanes.get(job_id)
+            if lane and job_id in self._pending[lane]:
+                self._pending[lane].remove(job_id)
                 self._fail(job_id, TaskCancelledError("Task was canceled."))
 
     def cancel_all(self) -> None:
         for token in self._tokens.values():
             token.cancel()
-        pending = tuple(self._pending)
-        self._pending.clear()
+        pending = [job_id for queue in self._pending.values() for job_id in queue]
+        for queue in self._pending.values():
+            queue.clear()
         for job_id in pending:
             self._fail(job_id, TaskCancelledError("Task was canceled."))
 
@@ -145,7 +155,9 @@ class JobController(QObject):
         self._blocks_close.pop(job_id, None)
         self._workers.pop(job_id, None)
         self._serial_jobs.discard(job_id)
-        if self._running_job == job_id:
-            self._running_job = None
-        self._start_next()
+        lane = self._lanes.pop(job_id, None)
+        if lane and self._running_job[lane] == job_id:
+            self._running_job[lane] = None
+        if lane:
+            self._start_next(lane)
         self.active_changed.emit(self.active_count)
