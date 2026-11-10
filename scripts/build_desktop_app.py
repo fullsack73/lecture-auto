@@ -57,6 +57,7 @@ def build(platform_name: str | None = None, *, smoke_test: bool = True) -> Path:
         root / "src" / "lecture_auto" / "__init__.py": "addon_source/lecture_auto/__init__.py",
         root / "src" / "lecture_auto" / "llm_adapter.py": "addon_source/lecture_auto/llm_adapter.py",
         root / "src" / "lecture_auto" / "llm_config.py": "addon_source/lecture_auto/llm_config.py",
+        root / "src" / "lecture_auto" / "stt_refinement.py": "addon_source/lecture_auto/stt_refinement.py",
         root / "src" / "lecture_auto" / "templates" / "structured-notes.md": "lecture_auto/templates/structured-notes.md",
         uv: f"bin/{uv_name}",
         ffmpeg_root / "bin" / f"ffmpeg{executable_suffix}": f"bin/ffmpeg{executable_suffix}",

@@ -28,6 +28,23 @@ def test_verify_rejects_note_template_outside_runtime_package_path(tmp_path: Pat
         verify(app, tmp_path / "nuitka-report.xml")
 
 
+def test_verify_rejects_missing_gemini_refinement_module(tmp_path: Path) -> None:
+    runtime = tmp_path / "LectureAuto.app" / "Contents" / "MacOS"
+    runtime.mkdir(parents=True)
+    for name in ("LectureAuto", "local_ai_worker.py", "gemini_addon_worker.py"):
+        (runtime / name).touch()
+    template = runtime / "lecture_auto" / "templates" / "structured-notes.md"
+    template.parent.mkdir(parents=True)
+    template.write_text("## Topic Overview", encoding="utf-8")
+    source = runtime / "addon_source" / "lecture_auto"
+    source.mkdir(parents=True)
+    for name in ("__init__.py", "llm_adapter.py", "llm_config.py"):
+        (source / name).touch()
+
+    with pytest.raises(RuntimeError, match="stt_refinement.py"):
+        verify(tmp_path / "LectureAuto.app", tmp_path / "report.xml")
+
+
 def test_binary_architecture_reads_windows_pe_machine(tmp_path: Path) -> None:
     executable = tmp_path / "LectureAuto.exe"
     payload = bytearray(512)

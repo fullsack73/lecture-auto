@@ -142,6 +142,10 @@ def verify(
     for worker in ("local_ai_worker.py", "gemini_addon_worker.py"):
         if not (runtime_root / worker).is_file():
             raise RuntimeError(f"Bundled add-on worker not found: {runtime_root / worker}")
+    for module in ("__init__.py", "llm_adapter.py", "llm_config.py", "stt_refinement.py"):
+        path = runtime_root / "addon_source" / "lecture_auto" / module
+        if not path.is_file():
+            raise RuntimeError(f"Bundled add-on module not found: {path}")
     uv_name = "uv.exe" if selected_platform == "windows" else "uv"
     if not (runtime_root / "bin" / uv_name).is_file():
         raise RuntimeError(f"Bundled uv executable not found: {runtime_root / 'bin' / uv_name}")

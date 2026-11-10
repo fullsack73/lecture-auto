@@ -40,6 +40,7 @@ if args[0] == "-c":
     if "platform.machine" in args[1]:
         print("arm64")
 elif args[:2] == ["-m", "nuitka"]:
+    assert any(arg.endswith("stt_refinement.py=addon_source/lecture_auto/stt_refinement.py") for arg in args)
     output = Path(next(arg.split("=", 1)[1] for arg in args if arg.startswith("--output-dir=")))
     runtime = output / "LectureAuto.app/Contents/MacOS"
     runtime.mkdir(parents=True)
