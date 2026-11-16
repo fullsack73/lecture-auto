@@ -352,3 +352,7 @@ lecture-auto session detail week-01 --json
 앱을 재시작하거나 설정을 다시 적용하면 미리보기를 다시 생성해야 한다.
 사용량은 `~/.lecture_auto/logs/llm-usage.jsonl`에서 확인할 수 있다.
 provider가 제공하는 토큰 수만 기록하며 강의 내용이나 API key는 남기지 않는다.
+
+정제 중 실패하거나 취소했다면 같은 세션에서 다시 정제를 실행해 완료한 구간을 재사용할 수 있다.
+본문·ASR 근거·모델·언어 등 요청 입력이 달라지면 처음부터 처리한다. 중간 결과는
+전사문 옆 `*.refine-checkpoint.json`에 보관하고 최종 전사문과 audit 저장 성공 후 제거한다.

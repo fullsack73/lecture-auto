@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import hashlib
+from dataclasses import asdict
 import logging
 from logging.handlers import RotatingFileHandler
 from datetime import datetime, timezone
@@ -13,12 +15,16 @@ from lecture_auto.llm_config import LLMConfig, normalize_gemini_model_name
 logger = logging.getLogger(__name__)
 
 
-def _log_llm_usage(provider: str, stage: str, response: Any) -> None:
+def _log_llm_usage(
+    provider: str, stage: str, response: Any, *, input_characters: dict[str, int] | None = None,
+) -> None:
     usage = getattr(response, "usage_metadata", None) if provider == "gemini" else response
     fields = ({"input_tokens": "prompt_token_count", "output_tokens": "candidates_token_count",
                "cached_tokens": "cached_content_token_count", "thinking_tokens": "thoughts_token_count"} if provider == "gemini" else
               {"input_tokens": "prompt_eval_count", "output_tokens": "eval_count"})
     record: dict[str, Any] = {"time": datetime.now(timezone.utc).isoformat(), "provider": provider, "stage": stage, "requests": 1}
+    if input_characters is not None:
+        record["input_characters"] = input_characters
     for name, field in fields.items():
         value = usage.get(field) if isinstance(usage, dict) else getattr(usage, field, None)
         if type(value) is int:
@@ -104,31 +110,16 @@ def _build_transcript_refinement_system_instruction(
     context_topic: str | None,
     language: str | None,
 ) -> str:
-    topic_prompt = f"The lecture topic or subject is '{context_topic}'. " if context_topic else ""
-    lang_prompt = (
-        f"Write the refined transcript in {language}, while preserving proper nouns, "
-        "technical terms, equations, code, and quoted phrases as spoken. "
-        if language
-        else ""
-    )
     return (
-        f"You are a precise lecture transcript editor. {topic_prompt}"
-        "Convert the raw ASR transcript into a clean, readable transcript, not a summary. "
-        "Preserve the speaker's meaning, order of ideas, examples, terminology, numbers, formulas, and named entities. "
-        "Fix transcription mistakes, including phonetically plausible word substitutions and awkward wording caused by ASR, "
-        "when the lecture topic and surrounding sentences make the intended wording clear. "
-        "Also fix spacing, punctuation, capitalization, sentence boundaries, and paragraph breaks. "
-        "Remove meaningless filler, duplicated starts, and accidental repetitions only when they do not change the lecture content. "
-        "Keep uncertainty, emphasis, questions, and instructor cues when they affect meaning. "
-        "Use neighboring sentences and alternative ASR candidates as correction evidence. Lecture materials and glossary terms "
-        "may validate a contextually supported spelling, but their presence alone does not prove that a word was spoken. "
-        "Low ASR confidence alone is not a reason to leave clearly corrupted wording unchanged. "
-        "Do not invent omitted sentences, facts, explanations, headings, bullets, numbers, formulas, named entities, timestamps, "
-        "speaker labels, or commentary. Correct numbers, formulas, and named entities only when the source and context strongly support them. "
-        "Only when multiple plausible readings remain after using the available context, preserve the span as '[불명확 mm:ss]' "
-        "using its evidence timestamp. Without a timestamp, keep the closest original wording instead of guessing. "
-        f"{lang_prompt}"
-        "Output only the refined transcript text."
+        "You are a precise lecture transcript editor, not a summary writer. Preserve meaning, order, examples, terms, "
+        "numbers, formulas, names, code, quotes and meaningful uncertainty/emphasis. "
+        "Fix spacing, punctuation and phonetically plausible word substitutions supported by context. "
+        "Remove only meaningless filler/repetition. Change names/numbers/formulas only with strong source evidence. "
+        "Add no facts, headings or commentary. Materials validate spelling, not speech. "
+        "Low ASR confidence alone does not make text unclear. Only when multiple plausible readings remain, "
+        "use [불명확 mm:ss] with evidence time; otherwise keep original wording. Output only edited text. "
+        + (f"Topic: {context_topic}. " if context_topic else "")
+        + (f"Language: {language}." if language else "Preserve the source language.")
     )
 
 
@@ -673,6 +664,7 @@ class LLMProviderAdapter(Protocol):
         raw_text: str,
         context_topic: str | None = None,
         evidence: dict[str, object] | None = None,
+        checkpoint_path: str | None = None,
     ) -> str:
         """Refines transcript by fixing typos, spacing, and wording, while preserving meaning."""
         ...
@@ -722,7 +714,15 @@ class GeminiLLMAdapter:
                 "google-genai is not installed. Run: pip install google-genai"
             ) from exc
 
-        self.client = genai.Client(api_key=self.config.api_key)
+        self.client = genai.Client(
+            api_key=self.config.api_key,
+            http_options={"retry_options": {
+                "attempts": 2,
+                "http_status_codes": [500, 502, 503, 504],
+                "initial_delay": 1,
+                "max_delay": 2,
+            }},
+        )
 
     def _call_addon(self, method: str, *args: Any, **kwargs: Any) -> str:
         if self._addon is None:
@@ -750,6 +750,7 @@ class GeminiLLMAdapter:
         raw_text: str,
         context_topic: str | None = None,
         evidence: dict[str, object] | None = None,
+        checkpoint_path: str | None = None,
     ) -> str:
         """Refines the transcript in chunks using the Gemini model."""
         if not raw_text or not raw_text.strip():
@@ -760,6 +761,7 @@ class GeminiLLMAdapter:
                 raw_text,
                 context_topic=context_topic,
                 evidence=evidence,
+                checkpoint_path=checkpoint_path,
             )
 
         try:
@@ -789,10 +791,18 @@ class GeminiLLMAdapter:
             chunk_size=chunk_size,
             overlap_characters=0,
         )
-        refined_chunks = []
+        from lecture_auto.stt_refinement import RefinementCheckpoint
+
+        fingerprint = hashlib.sha256(json.dumps(
+            [raw_text, chunks, evidence, system_instructions, asdict(self.config)],
+            ensure_ascii=False, sort_keys=True,
+        ).encode()).hexdigest()
+        checkpoint = RefinementCheckpoint(checkpoint_path, fingerprint, len(chunks))
+        scoped = chunk_refinement_evidence(raw_text, chunks, evidence)
 
         try:
-            for chunk, chunk_evidence in zip(chunks, chunk_refinement_evidence(raw_text, chunks, evidence)):
+            for index in range(len(checkpoint.completed), len(chunks)):
+                chunk, chunk_evidence = chunks[index], scoped[index]
                 prompt = _build_transcript_refinement_prompt(
                     chunk,
                     evidence=chunk_evidence,
@@ -811,11 +821,14 @@ class GeminiLLMAdapter:
                     contents=prompt,
                     config=config_dict,  # type: ignore
                 )
-                _log_llm_usage("gemini", "refine", response)
+                _log_llm_usage("gemini", "refine", response, input_characters={
+                        "transcript": len(chunk), "context": len(prompt) - len(chunk),
+                        "system": len(system_instructions),
+                    })
                 text = (getattr(response, "text", "") or "").strip()
-                refined_chunks.append(text)
+                checkpoint.append(text)
                 
-            return "\n".join(refined_chunks)
+            return "\n".join(checkpoint.completed)
 
         except PermissionDenied as exc:
             raise LLMProviderAuthError(f"Gemini authentication failed: {exc}") from exc
@@ -1045,6 +1058,7 @@ class OllamaLLMAdapter:
         raw_text: str,
         context_topic: str | None = None,
         evidence: dict[str, object] | None = None,
+        checkpoint_path: str | None = None,
     ) -> str:
         """Refines the transcript in chunks using the Ollama model."""
         if not raw_text or not raw_text.strip():
@@ -1063,10 +1077,18 @@ class OllamaLLMAdapter:
             chunk_size=chunk_size,
             overlap_characters=0,
         )
-        refined_chunks = []
+        from lecture_auto.stt_refinement import RefinementCheckpoint
+
+        fingerprint = hashlib.sha256(json.dumps(
+            [raw_text, chunks, evidence, system_instructions, asdict(self.config)],
+            ensure_ascii=False, sort_keys=True,
+        ).encode()).hexdigest()
+        checkpoint = RefinementCheckpoint(checkpoint_path, fingerprint, len(chunks))
+        scoped = chunk_refinement_evidence(raw_text, chunks, evidence)
 
         try:
-            for chunk, chunk_evidence in zip(chunks, chunk_refinement_evidence(raw_text, chunks, evidence)):
+            for index in range(len(checkpoint.completed), len(chunks)):
+                chunk, chunk_evidence = chunks[index], scoped[index]
                 prompt = _build_transcript_refinement_prompt(
                     chunk,
                     evidence=chunk_evidence,
@@ -1080,9 +1102,12 @@ class OllamaLLMAdapter:
                             {"role": "user", "content": prompt}
                         ]
                     )
-                    _log_llm_usage("ollama", "refine", response)
+                    _log_llm_usage("ollama", "refine", response, input_characters={
+                        "transcript": len(chunk), "context": len(prompt) - len(chunk),
+                        "system": len(system_instructions),
+                    })
                     text = response.get("message", {}).get("content", "").strip()
-                    refined_chunks.append(text)
+                    checkpoint.append(text)
                 except Exception as exc:
                     error_msg = str(exc).lower()
                     if "connection" in error_msg or "refused" in error_msg:
@@ -1097,7 +1122,7 @@ class OllamaLLMAdapter:
                         ) from exc
                     raise LLMTransientNetworkError(f"Ollama request failed: {exc}") from exc
                 
-            return "\n".join(refined_chunks)
+            return "\n".join(checkpoint.completed)
 
         except (LLMConfigError, LLMProviderAuthError, LLMTransientNetworkError):
             raise

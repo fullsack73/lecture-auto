@@ -17,6 +17,7 @@
 - **LibreOffice 애드온**: macOS, Windows, Linux에서 설정 또는 CLI로 사용자 runtime에 별도 설치하며 기존 시스템 설치도 탐색한다. 공식 설치 파일의 SHA-256을 검증하고 실행 검증 후 활성화한다. 전체 AI 설치와 Python runtime 제거는 LibreOffice를 변경하지 않는다.
 - **데스크톱 패키징**: 모든 플랫폼은 Nuitka standalone 빌드에서 구조화 노트 템플릿, add-on worker, `uv`, FFmpeg/FFprobe를 같은 상대 경로로 포함한다. Windows는 Inno Setup installer를, Linux는 tar.gz와 선택적 AppImage를 생성한다.
 - **macOS 빌드 경로/이름**: 빌드 출력은 `build/macos`, 배포 번들은 `Lecture Auto.app`으로 고정한다. `BUILD_DIR` 환경변수나 버전명을 출력 경로/번들명에 반영하지 않는다. 버전은 앱 metadata로만 구분하며 설치 대상 `/Applications/Lecture Auto.app`과 같은 이름을 사용한다. 빌드 출력의 앱이 실행 중이면 덮어쓰지 않는다.
+- **macOS 개발 버전**: `scripts/build_macos_app.sh [--install] [--version X.Y.Z-label]`로 빌드 표시 버전을 지정한다. 옵션 순서는 자유이며 생략하면 `pyproject.toml` 버전을 사용한다. 잘못된 인수는 환경 변경 전에 거부한다. 원본 프로젝트 버전은 변경하지 않고 앱의 `LectureAutoDisplayVersion`과 `build/macos/build-metadata.json`에 전체 표시 버전을 기록한다. macOS 표준 숫자 버전 필드는 `X.Y.Z`로 유지하고 GUI는 번들의 표시 버전을 우선한다. plist 변경 후 다시 서명한 다음 패키징 smoke를 실행한다. 앱 이름·출력·설치 경로는 버전 인수와 관계없이 동일하다.
 - **macOS 재설치**: macOS 앱은 패키징 호환성이 검증된 ARM64 Python 3.11로만 빌드한다. 실행 중인 설치본은 녹음과 백그라운드 작업 보호를 위해 빌드 전에 감지하고 교체하지 않는다. 닫힌 기존 앱은 새 번들을 임시 경로에 복사하고 서명 및 Ollama 경로 GUI smoke launch를 검증한 뒤 교체한다. 복사나 검증에 실패하면 기존 설치본을 보존한다.
 - **데스크톱 제공 방식**: 버전 태그는 Windows x86_64 installer, Linux x86_64 AppImage/portable archive와 SHA-256 목록을 GitHub Release에 게시한다. macOS 로컬 앱은 ad-hoc 서명이고 Windows/Linux 배포본도 코드 서명되지 않는다.
 
@@ -62,6 +63,7 @@ GUI의 전사(API/local)와 LLM 작업(전사문 정제·노트 미리보기/저
 - CPU `cpu_threads=0`은 worker가 물리 core 수를 보수적으로 추정해 사용한다.
   `num_workers`와 함께 무제한 논리 core oversubscription을 만들지 않는다.
 - LLM은 `gemini`와 `ollama` provider를 공통 `LLMProviderAdapter` 경계로 제공한다.
+- Gemini API는 SDK의 요청별 retry를 명시적으로 설정한다. HTTP 500/502/503/504는 최초 요청 포함 최대 2회, 1~2초 backoff를 적용한다. 400/401/403/429는 자동 재시도하지 않는다. SDK가 지원하는 일시적 연결 오류도 같은 횟수 제한을 적용한다. 작업 전체를 다시 실행하지 않고 실패한 HTTP 요청만 재시도한다. 두 번 모두 실패하면 기존 오류로 종료한다.
 - 녹음은 FFmpeg/AVFoundation 등 플랫폼 실행 세부사항을 `capture_runtime.py` 안에 둔다. 런타임은 앱에 포함된 `bin/ffmpeg`와 `bin/ffprobe`를 시스템 `PATH`보다 우선한다. 녹음 중 FFmpeg `astats`의 최신 peak dBFS를 서비스 경계로 제공하며 GUI는 이를 입력 레벨 미터로 표시한다.
 - 외부 SDK import는 adapter/runtime 내부에서 지연 import할 수 있으며, 가벼운 명령과 테스트 import를 불필요하게 막지 않는다.
 - provider 예외는 서비스/CLI가 처리할 수 있는 프로젝트 예외로 변환한다.
@@ -140,9 +142,13 @@ DeepFilterNet은 지속 잡음이 확인된 경우에만 A/B 후보가 된다. r
 사용하며 실제 발화의 증거로 취급하지 않는다.
 
 LLM 정제는 각 chunk에 해당하는 ASR segment와 앞뒤 한 segment만 선택하고,
-최대 80개를 적용한다. 전사문과 연결되지 않는 segment, 전체 quality 보고서와
-다른 시간대의 ASR 후보는 요청에 포함하지 않는다. 긴 segment의 본문은 chunk
-앞뒤 240자 범위로 제한하며 glossary는 1,000자로 제한한다.
+신뢰도(avg_logprob < -1.1) 또는 무음확률(no_speech_prob > 0.7) 경고가 있는 행을 먼저 선택한 뒤 최대 80개를 적용한다. 전사문과 연결되지 않는 segment, 전체 quality 보고서와
+다른 시간대의 ASR 후보는 요청에 포함하지 않는다. segment 본문을 JSON에 복제하지
+않고 chunk 기준 시작·끝 문자 위치, 시작 시간, confidence를 공통 field 목록과 배열로
+전달한다. 시간·confidence는 LLM 입력에서만 소수 셋째 자리까지 줄이며 raw sidecar는
+변경하지 않는다. 인접 원문은 chunk 앞뒤 각 240자까지만 제공하고 glossary는
+1,000자로 제한한다. 현재 전사문·인접 문맥에 이미 있는 ASR 후보 원문은 재첨부하지
+않고 다른 후보 표현만 남긴다.
 
 Gemini 노트 생성은 PDF를 작업당 한 번 읽어 용어·수식·구조·예제 참고문을
 최대 8,000자로 추출한다. 이후 chunk 생성, 병합, 보정은 참고문을 재사용한다.
@@ -158,7 +164,9 @@ Gemini 노트 생성은 PDF를 작업당 한 번 읽어 용어·수식·구조·
 LLM 요청별 단계·호출 수·시간과 provider가 제공한 입력/출력/캐시/추론 토큰 수는
 `~/.lecture_auto/logs/llm-usage.jsonl`에 기록한다(1 MB, 백업 2개).
 전사문, 자료 내용, API key는 기록하지 않으며 사용량 필드 누락이나 로그 저장 실패는
-생성 작업을 중단하지 않는다. Ollama의 짧은 노트도 전체 JSON을 한 번에 생성한다.
+생성 작업을 중단하지 않는다. 로그의 requests는 완료된 SDK 호출 수이며 내부 HTTP
+재시도 횟수나 실패 응답의 토큰 사용량을 나타내지 않는다. 정제 요청은 본문·보조 문맥·system instruction의
+문자 수도 분리해서 기록한다. Ollama의 짧은 노트도 전체 JSON을 한 번에 생성한다.
 
 LLM refine는 raw sidecar의 timestamp, confidence, 1차/2차 ASR 정보를 선택적 evidence로
 받는다. 문장부호·띄어쓰기·문장 경계·무의미 반복뿐 아니라 강의 주제와 인접 문장으로
@@ -204,3 +212,10 @@ lecture-auto --help
 ```
 
 변경 범위가 작으면 관련 테스트를 먼저 실행하고, 최종적으로 전체 테스트를 실행한다. 실제 provider/장치가 필요한 검증은 통합 환경에서만 수행하고 기본 테스트를 외부 서비스에 의존시키지 않는다.
+
+정제는 선택한 전사문 옆 `*.refine-checkpoint.json`에 성공한 구간을 atomic replace로 저장한다.
+원문·chunk 경계·evidence·system instruction·LLM 설정의 SHA-256이 같은 경우에만 재사용한다.
+설정의 API key는 해시 입력으로만 사용하며 파일에 저장하지 않는다. 실패·취소 시 완료한
+구간을 유지하고 최종 전사문과 audit 저장 성공 후 checkpoint를 삭제한다. 비어 있거나
+손상된 checkpoint는 재사용하지 않는다. Gemini add-on에도 선택적 checkpoint_path를 전달한다.
+정제 지시문은 보존·교정·불확실성 규칙을 유지하면서 압축한다.

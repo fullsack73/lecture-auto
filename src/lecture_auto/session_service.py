@@ -1571,18 +1571,21 @@ class SessionService:
             except (OSError, json.JSONDecodeError, TypeError, ValueError):
                 refinement_evidence = None
         
+        checkpoint_path = str(target_path.with_suffix(".refine-checkpoint.json"))
         report_progress(progress_callback, job_id=job_id, session_id=session_id, stage="llm_refine", completed=1, total=2, message="Refining transcript.")
         try:
             if refinement_evidence:
                 refined_text = self.llm_adapter.refine_transcript(
                     raw_text,
                     context_topic=context_topic,
+                    checkpoint_path=checkpoint_path,
                     evidence=refinement_evidence,
                 )
             else:
                 refined_text = self.llm_adapter.refine_transcript(
                     raw_text,
                     context_topic=context_topic,
+                    checkpoint_path=checkpoint_path,
                 )
         except LLMConfigError as exc:
             raise SessionCommandError(code="LLM_CONFIG_FAILED", message=str(exc), guidance="Check LLM configuration.", exit_code=1)
@@ -1612,6 +1615,8 @@ class SessionService:
             self.store.metadata_file.parent.parent / audit_relative_path,
             audit,
         )
+
+        Path(checkpoint_path).unlink(missing_ok=True)
 
         # Output payload logic for formatting
         target_used = "raw" if target_path == raw_transcript_path else "edited"

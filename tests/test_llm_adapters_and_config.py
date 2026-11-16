@@ -16,6 +16,11 @@ from lecture_auto.llm_adapter import (
     _render_structured_notes_markdown,
 )
 
+@pytest.fixture(autouse=True)
+def isolate_usage_logging(monkeypatch):
+    monkeypatch.setattr("lecture_auto.llm_adapter._log_llm_usage", lambda *args, **kwargs: None)
+
+
 def test_llm_config_validation_fails_without_api_key() -> None:
     config = LLMConfig(api_key=None)
     with pytest.raises(ValueError, match="Google API key is required"):
@@ -43,7 +48,11 @@ def test_gemini_adapter_initializes_with_valid_config() -> None:
     with patch("google.genai.Client") as client_cls:
         adapter = GeminiLLMAdapter(config)
 
-    client_cls.assert_called_once_with(api_key="valid-key")
+    client_cls.assert_called_once_with(
+        api_key="valid-key",
+        http_options={"retry_options": {"attempts": 2, "http_status_codes": [500, 502, 503, 504],
+                                        "initial_delay": 1, "max_delay": 2}},
+    )
 
 
 def test_gemini_adapter_missing_api_key_raises_error() -> None:
@@ -269,3 +278,61 @@ def test_gemma4_high_thinking_config_is_enabled() -> None:
     _apply_thinking_config(config, FakeTypes, "gemma-4-26b-a4b-it", "high")
 
     assert config["thinking_config"] == {"thinking_level": "high"}
+
+
+@pytest.mark.parametrize("statuses, succeeds", [([500, 200], True), ([500, 500], False), ([400], False), ([403], False), ([429], False)])
+def test_gemini_retries_only_transient_server_errors_once(statuses, succeeds):
+    from google import genai
+    from google.genai import _api_client
+    httpx = getattr(_api_client, "httpx2", None) or _api_client.httpx
+    from lecture_auto.llm_adapter import LLMTransientNetworkError, LLMProviderAuthError
+    real_client = genai.Client
+    seen = []
+    def handler(request):
+        index = len(seen)
+        seen.append(json.loads(request.content))
+        status = statuses[index]
+        if status == 200:
+            return httpx.Response(200, json={"candidates": [{"content": {"parts": [{"text": "clean transcript"}]}}]})
+        return httpx.Response(status, json={"error": {"code": status, "message": "An internal error occurred"}})
+    def make_client(**kwargs):
+        kwargs["http_options"]["client_args"] = {"transport": httpx.MockTransport(handler)}
+        return real_client(**kwargs)
+    with patch("google.genai.Client", side_effect=make_client):
+        adapter = GeminiLLMAdapter(LLMConfig(api_key="fake-key"))
+    try:
+        if succeeds:
+            assert adapter.refine_transcript("synthetic transcript") == "clean transcript"
+        else:
+            with pytest.raises((LLMTransientNetworkError, LLMProviderAuthError)):
+                adapter.refine_transcript("synthetic transcript")
+        assert len(seen) == len(statuses)
+        if len(seen) == 2:
+            assert seen[0] == seen[1]
+    finally:
+        adapter.client.close()
+
+
+def test_gemini_retry_does_not_restart_completed_chunks():
+    from google import genai
+    from google.genai import _api_client
+    httpx = getattr(_api_client, "httpx2", None) or _api_client.httpx
+    real_client = genai.Client
+    requests = []
+    def handler(request):
+        requests.append(json.loads(request.content))
+        if len(requests) == 2:
+            return httpx.Response(500, json={"error": {"code": 500, "message": "An internal error occurred"}})
+        return httpx.Response(200, json={"candidates": [{"content": {"parts": [{"text": "clean"}]}}]})
+    def make_client(**kwargs):
+        kwargs["http_options"]["client_args"] = {"transport": httpx.MockTransport(handler)}
+        return real_client(**kwargs)
+    with patch("google.genai.Client", side_effect=make_client):
+        adapter = GeminiLLMAdapter(LLMConfig(api_key="fake-key", chunk_size=500))
+    try:
+        adapter.refine_transcript("first chunk " * 30 + "second distinct chunk " * 30)
+        assert len(requests) == 4
+        assert requests[0] != requests[1]
+        assert requests[1] == requests[2]
+    finally:
+        adapter.client.close()

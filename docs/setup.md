@@ -86,6 +86,18 @@ PYTHON=.venv/bin/python UV=.venv/bin/uv scripts/build_macos_app.sh --install
 
 After the GUI smoke launch and signature verification pass, the app is available at `/Applications/Lecture Auto.app`. A copy or verification failure leaves the previous installation intact.
 
+To label a local development build, pass an explicit version (option order is flexible):
+
+```bash
+PYTHON=.venv311/bin/python UV=.venv311/bin/uv scripts/build_macos_app.sh --install --version 0.1.16-dev
+```
+
+The app displays `v0.1.16-dev` and records the full label in build metadata without editing
+`pyproject.toml`. Omitting `--version` uses the project version. Accepted labels are `X.Y.Z`
+or `X.Y.Z-label`. Standard macOS version fields remain numeric; the app reads the full label
+from bundle metadata. The bundle name and install path stay the same, so `--install`
+replaces the existing app.
+
 The commands above explicitly select `.venv`, even if another environment is active. The macOS package is validated only with Python 3.11. If the script detects another Python version, it exits before touching build artifacts or the installed app. Install Python 3.11 first if `python3.11` is unavailable.
 
 ```bash

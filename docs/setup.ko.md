@@ -82,6 +82,18 @@ python -m pip install -e '.[build]'
 PYTHON=.venv/bin/python UV=.venv/bin/uv scripts/build_macos_app.sh --install
 ```
 
+개발 빌드는 표시 버전을 명시할 수 있다. `--install`과 `--version`의 순서는 자유다.
+
+```bash
+PYTHON=.venv311/bin/python UV=.venv311/bin/uv scripts/build_macos_app.sh --install --version 0.1.16-dev
+```
+
+앱 내부에는 `v0.1.16-dev`가 표시되고 빌드 기록에도 전체 버전이 남는다.
+원본 `pyproject.toml`은 수정하지 않는다. `--version`을 생략하면 프로젝트 버전을 사용한다.
+버전은 `X.Y.Z` 또는 `X.Y.Z-label` 형식이다. macOS 표준 버전 필드는 숫자만 유지하고
+개발 표시 버전은 별도 번들 metadata로 보관한다.
+앱 이름과 설치 경로는 동일하므로 `--install`은 기존 앱을 교체한다.
+
 성공하면 실행 smoke test와 서명 검증을 통과한 앱이 `/Applications/Lecture Auto.app`에 설치된다. 복사나 검증이 실패하면 기존 설치본은 유지된다.
 
 다른 가상환경이 활성화돼 있더라도 이 환경을 사용하도록 위 명령에서 `.venv`를 명시한다. macOS 패키지는 Python 3.11에서만 검증된다. 스크립트가 다른 Python을 감지하면 빌드 파일이나 기존 설치본을 건드리기 전에 종료한다. `python3.11` 명령이 없다면 Python 3.11을 먼저 설치한다.

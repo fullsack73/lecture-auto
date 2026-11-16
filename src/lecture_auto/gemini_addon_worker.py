@@ -37,6 +37,7 @@ def dispatch(request: dict[str, Any]) -> dict[str, Any]:
             str(request.get("raw_text") or ""),
             context_topic=request.get("context_topic"),
             evidence=request.get("evidence"),
+            checkpoint_path=request.get("checkpoint_path"),
         )
     elif action == "gemini_generate_notes":
         text = adapter.generate_notes(

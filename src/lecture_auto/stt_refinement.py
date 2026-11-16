@@ -3,10 +3,46 @@ from __future__ import annotations
 import difflib
 import hashlib
 import json
+import math
+import os
+import tempfile
 import re
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Iterable
+
+
+class RefinementCheckpoint:
+    def __init__(self, path: str | None, fingerprint: str, count: int) -> None:
+        self.path = Path(path) if path else None
+        self.fingerprint = fingerprint
+        self.completed: list[str] = []
+        if self.path:
+            try:
+                data = json.loads(self.path.read_text(encoding="utf-8"))
+                values = data.get("completed")
+                if (data.get("fingerprint") == fingerprint and isinstance(values, list)
+                        and len(values) <= count and all(isinstance(v, str) and v.strip() for v in values)):
+                    self.completed = values
+            except (OSError, ValueError, AttributeError):
+                pass
+
+    def append(self, text: str) -> None:
+        if not text.strip():
+            raise ValueError("Refinement returned empty text; the chunk was not checkpointed.")
+        self.completed.append(text)
+        if self.path:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            temporary = None
+            try:
+                with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=self.path.parent,
+                                                 prefix=".refine-", delete=False) as handle:
+                    temporary = Path(handle.name)
+                    json.dump({"fingerprint": self.fingerprint, "completed": self.completed}, handle, ensure_ascii=False)
+                os.replace(temporary, self.path)
+            finally:
+                if temporary:
+                    temporary.unlink(missing_ok=True)
 
 
 @dataclass(frozen=True)
@@ -92,27 +128,48 @@ def chunk_refinement_evidence(
         cursor = end if start >= 0 else cursor
         matches = [i for i, (left, right, _) in enumerate(aligned)
                    if start >= 0 and left < end and right > start]
-        selected = (aligned[max(0, matches[0] - 1):matches[-1] + 2] if matches else [])[:80]
+        selected = aligned[max(0, matches[0] - 1):matches[-1] + 2] if matches else []
+        selected = [(left, right, segment) for left, right, segment in selected
+                    if left < end + 240 and right > start - 240]
         scoped: dict[str, object] = {
-            "rule": evidence.get("rule"),
             "glossary": str(evidence.get("glossary") or "")[:1000],
+            "segment_fields": ["start_char", "end_char", "start_seconds", "avg_logprob", "no_speech_prob"],
+            "offsets": "Character offsets relative to the transcript chunk; outside offsets refer to context only.",
             "segments": [
-                {**segment, "text": raw_text[max(left, start - 240):min(right, end + 240)]}
+                [max(left, start - 240) - start, min(right, end + 240) - start,
+                 *[round(value, 3) if type(value) in (int, float) and math.isfinite(value) else None
+                   for value in (segment.get("start_time"), segment.get("avg_logprob"), segment.get("no_speech_prob"))]]
                 for left, right, segment in selected
-            ],
+                if ((isinstance(segment.get("avg_logprob"), (int, float)) and segment["avg_logprob"] < -1.1)
+                    or (isinstance(segment.get("no_speech_prob"), (int, float)) and segment["no_speech_prob"] > 0.7))
+            ][:80],
         }
+        if selected:
+            scoped["context_before"] = raw_text[max(0, start - 240):start]
+            scoped["context_after"] = raw_text[end:end + 240]
         passes = evidence.get("asr_passes")
         pairs = passes.get("candidate_pairs") if isinstance(passes, dict) else None
         if selected and isinstance(pairs, list):
             low = selected[0][2].get("start_time")
             high = selected[-1][2].get("end_time")
             if isinstance(low, (int, float)) and isinstance(high, (int, float)):
-                scoped["asr_passes"] = {"candidate_pairs": [
-                    pair for pair in pairs if isinstance(pair, dict)
-                    and isinstance(pair.get("start_time"), (int, float))
-                    and isinstance(pair.get("end_time"), (int, float))
-                    and pair["start_time"] < high and pair["end_time"] > low
-                ][:20]}
+                context = " ".join(raw_text[max(0, start - 240):end + 240].split())
+                alternatives = []
+                for pair in pairs:
+                    if not (isinstance(pair, dict)
+                            and isinstance(pair.get("start_time"), (int, float))
+                            and isinstance(pair.get("end_time"), (int, float))
+                            and pair["start_time"] < high and pair["end_time"] > low):
+                        continue
+                    variants = {key: value for key in ("primary", "retry")
+                                if isinstance(value := pair.get(key), str) and value.strip()
+                                and " ".join(value.split()) not in context}
+                    if variants:
+                        alternatives.append({"start_time": pair["start_time"],
+                                             "end_time": pair["end_time"], **variants})
+                    if len(alternatives) == 20:
+                        break
+                scoped["asr_passes"] = {"candidate_pairs": alternatives}
         result.append(scoped)
     return result
 

@@ -23,6 +23,32 @@ APP="$BUILD_DIR/Lecture Auto.app"
 INSTALL_APP="/Applications/Lecture Auto.app"
 INSTALLER="$ROOT/scripts/install_macos_app.py"
 
+INSTALL_REQUESTED=0
+APP_VERSION_OVERRIDE=""
+while (( $# )); do
+  case "$1" in
+    --install) INSTALL_REQUESTED=1; shift ;;
+    --version)
+      if (( $# < 2 )) || [[ -z "$2" || -n "$APP_VERSION_OVERRIDE" ]]; then
+        print -u2 -- "--version requires one version, e.g. 0.1.16-dev"
+        exit 2
+      fi
+      APP_VERSION_OVERRIDE="$2"
+      shift 2
+      ;;
+    --help|-h)
+      print "Usage: $0 [--install] [--version VERSION]"
+      print "Example: $0 --install --version 0.1.16-dev"
+      exit 0
+      ;;
+    *) print -u2 "Unknown argument: $1"; exit 2 ;;
+  esac
+done
+if [[ -n "$APP_VERSION_OVERRIDE" && ! "$APP_VERSION_OVERRIDE" =~ '^[0-9]+[.][0-9]+[.][0-9]+([-+][A-Za-z0-9][A-Za-z0-9.-]*)?$' ]]; then
+  print -u2 "Invalid version: $APP_VERSION_OVERRIDE (expected X.Y.Z or X.Y.Z-label)"
+  exit 2
+fi
+
 if [[ "$(uname -m)" != "arm64" ]]; then
   print -u2 "This build script requires a native arm64 shell."
   exit 2
@@ -58,10 +84,12 @@ if ! "$PYTHON" -c 'import sys; raise SystemExit(0 if sys.version_info[:2] == (3,
   exit 2
 fi
 
+APP_VERSION="${APP_VERSION_OVERRIDE:-$("$PYTHON" "$ROOT/scripts/project_version.py")}"
+NUMERIC_VERSION="${APP_VERSION%%[-+]*}"
+print "Building Lecture Auto $APP_VERSION"
 "$UV" pip install --python "$PYTHON" --no-deps --editable "$ROOT"
-APP_VERSION="$("$PYTHON" "$ROOT/scripts/project_version.py")"
 
-if [[ "${1:-}" == "--install" ]]; then
+if (( INSTALL_REQUESTED )); then
   "$PYTHON" "$INSTALLER" check "$INSTALL_APP"
 fi
 "$PYTHON" "$INSTALLER" check "$APP"
@@ -90,7 +118,7 @@ rm -rf "$BUILD_DIR/app.build" "$BUILD_DIR/app.dist" "$BUILD_DIR/app.app" \
   --macos-target-arch=arm64 \
   --macos-app-name="Lecture Auto" \
   --macos-signed-app-name="com.anarchytoast.lectureauto" \
-  --macos-app-version="${APP_VERSION%%+*}" \
+  --macos-app-version="$NUMERIC_VERSION" \
   --macos-app-icon="$ICON_ICNS" \
   --macos-app-protected-resource="NSMicrophoneUsageDescription:Lecture Auto records lecture audio selected by the user." \
   --output-dir="$BUILD_DIR" \
@@ -130,7 +158,20 @@ if [[ ! -x "$APP/Contents/MacOS/LectureAuto" ]]; then
   exit 3
 fi
 
+"$PYTHON" - "$APP/Contents/Info.plist" "$APP_VERSION" <<'PYVERSION'
+import plistlib
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+info = plistlib.loads(path.read_bytes())
+info["LectureAutoDisplayVersion"] = sys.argv[2]
+path.write_bytes(plistlib.dumps(info))
+PYVERSION
+
 chmod +x "$APP/Contents/MacOS/bin/ffmpeg" "$APP/Contents/MacOS/bin/ffprobe"
+
+codesign --force --deep --sign - --identifier "com.anarchytoast.lectureauto" "$APP"
 
 "$PYTHON" "$ROOT/scripts/verify_lightweight_app.py" \
   --app "$APP" \
@@ -139,17 +180,15 @@ chmod +x "$APP/Contents/MacOS/bin/ffmpeg" "$APP/Contents/MacOS/bin/ffprobe"
   --architecture arm64 \
   --smoke-test
 
-codesign --force --deep --sign - --identifier "com.anarchytoast.lectureauto" "$APP"
-
 FINISHED_AT="$(date +%s)"
 APP_KB="$(du -sk "$APP" | awk '{print $1}')"
-printf '{"started_at":%s,"finished_at":%s,"duration_seconds":%s,"app_size_kb":%s,"previous_partial_size_kb":%s}\n' \
-  "$STARTED_AT" "$FINISHED_AT" "$((FINISHED_AT-STARTED_AT))" "$APP_KB" "$PREVIOUS_KB" \
+printf '{"version":"%s","started_at":%s,"finished_at":%s,"duration_seconds":%s,"app_size_kb":%s,"previous_partial_size_kb":%s}\n' \
+  "$APP_VERSION" "$STARTED_AT" "$FINISHED_AT" "$((FINISHED_AT-STARTED_AT))" "$APP_KB" "$PREVIOUS_KB" \
   > "$BUILD_DIR/build-metadata.json"
 
-if [[ "${1:-}" == "--install" ]]; then
+if (( INSTALL_REQUESTED )); then
   "$PYTHON" "$INSTALLER" install "$APP" "$INSTALL_APP"
-  print "Installed: $INSTALL_APP"
+  print "Installed: $INSTALL_APP ($APP_VERSION)"
 else
-  print "Built: $APP"
+  print "Built: $APP ($APP_VERSION)"
 fi

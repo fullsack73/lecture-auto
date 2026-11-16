@@ -31,12 +31,14 @@ class GeminiAddonAdapter:
         raw_text: str,
         context_topic: str | None = None,
         evidence: dict[str, object] | None = None,
+        checkpoint_path: str | None = None,
     ) -> str:
         return self._run(
             "gemini_refine_transcript",
             raw_text=raw_text,
             context_topic=context_topic,
             evidence=evidence,
+            checkpoint_path=checkpoint_path,
         )
 
     def generate_notes(

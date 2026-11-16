@@ -117,3 +117,6 @@ segment timestamp, confidence, 선택적 word timestamp를 보존하는 versione
 LLM 진단 로그는 workspace와 별도로 `~/.lecture_auto/logs/llm-usage.jsonl`에 둔다.
 요청 단계와 provider 사용량 숫자만 보관하며 콘텐츠와 자격 증명은 포함하지 않는다.
 노트 미리보기 재사용 상태는 SessionService 메모리에만 두고 파일/schema를 추가하지 않는다.
+
+정제 중간 결과는 선택한 전사문 옆 `*.refine-checkpoint.json`에만 저장한다.
+이 파일은 사용자 workspace 데이터이며 정제 성공 후 제거된다.

@@ -665,3 +665,22 @@ def test_local_ai_section_shows_uninstalled_features(tmp_path: Path, qtbot) -> N
         window.settings_page.runtime_feature.itemData(index)
         for index in range(window.settings_page.runtime_feature.count())
     ] == ["whisper", "deepfilter", "gemini", "libreoffice", "all"]
+
+
+def test_compiled_macos_version_uses_explicit_build_label(tmp_path, monkeypatch):
+    import plistlib
+    from lecture_auto.gui import app as gui
+    contents = tmp_path / "Lecture Auto.app/Contents"
+    (contents / "MacOS").mkdir(parents=True)
+    info = contents / "Info.plist"
+    info.write_bytes(plistlib.dumps({"CFBundleShortVersionString": "0.1.16",
+                                    "LectureAutoDisplayVersion": "0.1.16-dev"}))
+    monkeypatch.setattr(gui.sys, "platform", "darwin")
+    monkeypatch.setattr(gui.sys, "executable", str(contents / "MacOS/LectureAuto"))
+    monkeypatch.setattr(gui, "__compiled__", True, raising=False)
+    assert gui._application_version() == "0.1.16-dev"
+    info.write_bytes(plistlib.dumps({"CFBundleShortVersionString": "0.1.16"}))
+    monkeypatch.setattr(gui, "version", lambda _: "0.1.16")
+    assert gui._application_version() == "0.1.16"
+    info.unlink()
+    assert gui._application_version() == "0.1.16"

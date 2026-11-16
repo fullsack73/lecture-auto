@@ -70,10 +70,24 @@ from lecture_auto.stt_config import (
 from lecture_auto.tasking import TaskCancelledError, TaskEvent
 
 
-try:
-    APP_VERSION = version("lecture-auto").replace("+", "-")
-except PackageNotFoundError:
-    APP_VERSION = "dev"
+def _application_version() -> str:
+    if sys.platform == "darwin" and "__compiled__" in globals():
+        import plistlib
+
+        try:
+            info = plistlib.loads((Path(sys.executable).parent.parent / "Info.plist").read_bytes())
+            label = info.get("LectureAutoDisplayVersion") if isinstance(info, dict) else None
+            if isinstance(label, str) and label.strip():
+                return label
+        except (OSError, ValueError, plistlib.InvalidFileException):
+            pass
+    try:
+        return version("lecture-auto").replace("+", "-")
+    except PackageNotFoundError:
+        return "dev"
+
+
+APP_VERSION = _application_version()
 
 SESSION_PROGRESS_ROLE = Qt.UserRole + 1
 

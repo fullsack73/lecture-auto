@@ -62,6 +62,7 @@ PySide6 기반으로 같은 workspace와 세션 데이터를 공유한다. 세�
 - raw transcript 생성
 - timestamp/confidence/runtime을 담은 raw STT sidecar 생성
 - LLM으로 오탈자/띄어쓰기/표현을 다듬되 의미와 용어를 보존하는 edited transcript 생성
+- 정제 실패·취소 후 같은 입력으로 재실행하면 완료한 구간을 재사용
 - refine evidence와 숫자·고유명사 변경 audit sidecar
 
 ### 노트와 library

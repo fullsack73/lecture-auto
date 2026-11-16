@@ -53,7 +53,8 @@ def test_refine_falls_back_to_raw_when_edited_missing(service: SessionService) -
     assert result.payload["target_used"] == "raw"
     service.llm_adapter.refine_transcript.assert_called_once_with(  # type: ignore
         "Hello, this  is a raw transcript... It needs    refinement.",
-        context_topic="Introduction to AI"
+        context_topic="Introduction to AI",
+        checkpoint_path=str(service.store.metadata_file.parent.parent / "transcripts/cs101/test-session-1-raw.refine-checkpoint.json")
     )
     
     transcripts_dir = service.store.metadata_file.parent.parent / "transcripts" / "cs101"
@@ -71,7 +72,8 @@ def test_refine_uses_edited_when_present(service: SessionService) -> None:
     assert result.payload["target_used"] == "edited"
     service.llm_adapter.refine_transcript.assert_called_once_with(  # type: ignore
         "This is an existing edited transcript.",
-        context_topic="Introduction to AI"
+        context_topic="Introduction to AI",
+        checkpoint_path=str(service.store.metadata_file.parent.parent / "transcripts/cs101/test-session-1-edited.refine-checkpoint.json")
     )
     assert edited_path.read_text() == "Refined Mock Output"
 
@@ -86,7 +88,8 @@ def test_refine_forces_raw_with_flag_even_if_edited_present(service: SessionServ
     assert result.payload["target_used"] == "raw"
     service.llm_adapter.refine_transcript.assert_called_once_with(  # type: ignore
         "Hello, this  is a raw transcript... It needs    refinement.",
-        context_topic="Introduction to AI"
+        context_topic="Introduction to AI",
+        checkpoint_path=str(service.store.metadata_file.parent.parent / "transcripts/cs101/test-session-1-raw.refine-checkpoint.json")
     )
     assert edited_path.read_text() == "Refined Mock Output"
 
@@ -128,6 +131,7 @@ def test_refine_uses_raw_when_raw_is_newer(service: SessionService) -> None:
     assert result.payload["target_used"] == "raw"
     service.llm_adapter.refine_transcript.assert_called_once_with(  # type: ignore
         "This is the new raw transcript that is newer.",
-        context_topic="Introduction to AI"
+        context_topic="Introduction to AI",
+        checkpoint_path=str(service.store.metadata_file.parent.parent / "transcripts/cs101/test-session-1-raw.refine-checkpoint.json")
     )
     assert edited_path.read_text() == "Refined Mock Output"

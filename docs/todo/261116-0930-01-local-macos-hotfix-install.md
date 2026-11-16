@@ -19,3 +19,4 @@ LLM 입력 중복 수정이 포함된 앱을 이 Mac에서 재빌드하고 안�
 ## 참고
 
 - 작업 기록: docs/reports/261116-0925-01-llm-input-hotfix.md
+- 추가 정제 입력 수정도 포함: docs/reports/261116-1010-01-refinement-evidence-compaction.md

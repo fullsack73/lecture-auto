@@ -10,7 +10,7 @@ def test_release_builders_use_pyproject_version() -> None:
     pyproject = (root / "pyproject.toml").read_text()
     assert '"PySide6>=6.8,<6.12"' in pyproject
     assert '"nuitka==4.1.3"' in pyproject
-    assert '--macos-app-version="${APP_VERSION%%+*}"' in (
+    assert '--macos-app-version="$NUMERIC_VERSION"' in (
         root / "scripts" / "build_macos_app.sh"
     ).read_text()
     assert "--include-distribution-metadata=lecture-auto" in (
