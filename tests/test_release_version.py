@@ -40,3 +40,5 @@ def test_release_builders_use_pyproject_version() -> None:
 
     assert "name: lecture-auto-macos" in workflow
     assert "sha256sum * > SHA256SUMS.txt" in workflow
+    assert "os: macos-15" in workflow
+    assert "os: macos-14" not in workflow

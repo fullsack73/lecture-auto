@@ -30,3 +30,11 @@
 - 사용자 요청으로 로컬 macOS 빌드·설치는 보류했다. 실행 중인 앱은 변경하지 않았다.
 - PDF 참고문은 최대 8,000자로 압축하므로 원본의 세부 정보가 생략될 수 있다.
 - 코드 서명·공증은 기존 정책을 유지한다.
+
+## CI 실행 환경 복구
+
+- 첫 수동 빌드 43780384973의 macOS job이 코드 실행 전에 취소되었다.
+- 오류: `The configuration 'macos-14-arm64-us-default' is not supported`.
+- GitHub 공식 runner 목록에서 ARM64 `macos-15` 지원을 확인하고 실행 환경을 변경했다.
+- 기존 실행은 취소하고 변경 커밋으로 세 OS 빌드를 다시 실행한다.
+- 근거: https://docs.github.com/en/actions/reference/runners/github-hosted-runners
