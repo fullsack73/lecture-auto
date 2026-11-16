@@ -343,3 +343,12 @@ lecture-auto session detail week-01 --json
 - `lecture-auto`만 실행하면 TUI가 열린다.
 - CLI는 반복 작업/스크립팅에 좋고, TUI는 세션별 작업에 편하다.
 - 상세 설치, provider별 설정, 문제 해결은 [setup.ko.md](setup.ko.md)에 둔다.
+
+### LLM 입력 사용량
+
+전사문 정제는 해당 구간의 ASR 정보만 전달한다. Gemini 노트 생성은 첨부 PDF를
+한 번 읽어 최대 8,000자의 참고문으로 재사용하므로 자료의 세부 내용이 압축될 수 있다.
+미리보기 후 입력과 설정이 같으면 노트 저장은 추가 LLM 생성 없이 결과를 저장한다.
+앱을 재시작하거나 설정을 다시 적용하면 미리보기를 다시 생성해야 한다.
+사용량은 `~/.lecture_auto/logs/llm-usage.jsonl`에서 확인할 수 있다.
+provider가 제공하는 토큰 수만 기록하며 강의 내용이나 API key는 남기지 않는다.

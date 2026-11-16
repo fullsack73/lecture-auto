@@ -5,7 +5,7 @@ import hashlib
 import os
 import shutil
 from contextlib import nullcontext
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, is_dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -119,6 +119,7 @@ class SessionService:
         self._local_stt_adapter = local_stt_adapter
         self._api_stt_adapter = api_stt_adapter
         self.llm_adapter = llm_adapter
+        self._note_previews: dict[str, tuple[str, str]] = {}
         self.local_runtime_manager = local_runtime_manager
         self.audio_format = audio_format
         self._migrate_legacy_artifact_paths()
@@ -1630,6 +1631,24 @@ class SessionService:
             message=f"Transcript successfully refined from {target_used} source."
         )
 
+    def _note_input_fingerprint(
+        self, session: dict[str, Any], transcript: str, source: str,
+        template: str, material_path: str | None,
+    ) -> str | None:
+        material_hash = None
+        if material_path:
+            try:
+                with Path(material_path).open("rb") as material:
+                    material_hash = hashlib.file_digest(material, "sha256").hexdigest()
+            except OSError:
+                return None
+        config = getattr(self.llm_adapter, "config", None)
+        inputs = [session.get("title"), session.get("course"), transcript, source, template,
+                  material_path, material_hash, type(self.llm_adapter).__name__,
+                  asdict(config) if is_dataclass(config) and not isinstance(config, type)
+                  else id(self.llm_adapter)]
+        return hashlib.sha256(json.dumps(inputs, ensure_ascii=False).encode()).hexdigest()
+
     def summarize_session(
         self,
         session_reference: str,
@@ -1661,9 +1680,16 @@ class SessionService:
             material_root = self.store.metadata_file.parent.parent
             material_path = str((material_root / session["material_file_path"]).resolve())
 
-        report_progress(progress_callback, job_id=job_id, session_id=session_id, stage="llm_summarize", completed=1, total=2, message="Generating structured notes.")
+        fingerprint = self._note_input_fingerprint(
+            session, transcript_text, transcript_source, template_text, material_path,
+        )
+        cached = self._note_previews.get(session_id)
+        if preview or not fingerprint or not cached or cached[0] != fingerprint:
+            self._note_previews.pop(session_id, None)
+            cached = None
+        report_progress(progress_callback, job_id=job_id, session_id=session_id, stage="llm_summarize", completed=1, total=2, message="Saving preview notes." if cached else "Generating structured notes.")
         try:
-            notes = self.llm_adapter.generate_notes(
+            notes = cached[1] if cached else self.llm_adapter.generate_notes(
                 transcript=transcript_text,
                 template=template_text,
                 context_topic=context_topic,
@@ -1713,11 +1739,16 @@ class SessionService:
 
         token.raise_if_cancelled()
         if preview:
+            if fingerprint:
+                self._note_previews[session_id] = (fingerprint, notes)
+                if len(self._note_previews) > 8:
+                    self._note_previews.pop(next(iter(self._note_previews)))
             payload["notes"] = notes
             report_progress(progress_callback, job_id=job_id, session_id=session_id, stage="complete", completed=2, total=2, message="Note preview ready.")
             return CommandResult(command="summarize", payload=payload, message=notes)
 
         self._write_note_file(note_relative_path=note_relative_path, note_text=notes)
+        self._note_previews.pop(session_id, None)
         report_progress(progress_callback, job_id=job_id, session_id=session_id, stage="complete", completed=2, total=2, message="Notes saved.")
         return CommandResult(
             command="summarize",

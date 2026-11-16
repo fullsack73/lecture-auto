@@ -2,12 +2,40 @@ from __future__ import annotations
 
 import json
 import logging
+from logging.handlers import RotatingFileHandler
+from datetime import datetime, timezone
+from pathlib import Path
 import re
 from typing import Any, Protocol
 
 from lecture_auto.llm_config import LLMConfig, normalize_gemini_model_name
 
 logger = logging.getLogger(__name__)
+
+
+def _log_llm_usage(provider: str, stage: str, response: Any) -> None:
+    usage = getattr(response, "usage_metadata", None) if provider == "gemini" else response
+    fields = ({"input_tokens": "prompt_token_count", "output_tokens": "candidates_token_count",
+               "cached_tokens": "cached_content_token_count", "thinking_tokens": "thoughts_token_count"} if provider == "gemini" else
+              {"input_tokens": "prompt_eval_count", "output_tokens": "eval_count"})
+    record: dict[str, Any] = {"time": datetime.now(timezone.utc).isoformat(), "provider": provider, "stage": stage, "requests": 1}
+    for name, field in fields.items():
+        value = usage.get(field) if isinstance(usage, dict) else getattr(usage, field, None)
+        if type(value) is int:
+            record[name] = value
+    usage_logger = logging.getLogger("lecture_auto.llm_usage")
+    try:
+        if not usage_logger.handlers:
+            directory = Path.home() / ".lecture_auto" / "logs"
+            directory.mkdir(parents=True, exist_ok=True)
+            handler = RotatingFileHandler(directory / "llm-usage.jsonl", maxBytes=1_000_000,
+                                          backupCount=2, encoding="utf-8")
+            usage_logger.addHandler(handler)
+            usage_logger.setLevel(logging.INFO)
+            usage_logger.propagate = False
+        usage_logger.info(json.dumps(record))
+    except OSError:
+        logger.warning("Unable to write LLM usage log.")
 
 STRUCTURED_NOTE_SCHEMA_KEYS = (
     "topic_overview",
@@ -219,34 +247,6 @@ def _build_structured_notes_merge_prompt(*, chunk_notes: list[dict[str, Any]]) -
         f"JSON shape: {STRUCTURED_NOTE_SCHEMA_DESCRIPTION}\n\n"
         "Chunk notes:\n"
         f"{json.dumps(chunk_notes, ensure_ascii=False)}"
-    )
-
-
-def _structured_note_section_schema(section_key: str) -> str:
-    if section_key == "detailed_explanations":
-        return '{"detailed_explanations":[{"title":"...","bullets":["..."]}]}'
-    if section_key == "topic_overview":
-        return '{"note_title":"...","topic_overview":["..."]}'
-    return f'{{"{section_key}":["..."]}}'
-
-
-def _build_structured_note_section_prompt(*, transcript: str, section_key: str) -> str:
-    schema = _structured_note_section_schema(section_key)
-    title_instruction = (
-        f"Title instruction: {STRUCTURED_NOTE_TITLE_INSTRUCTION}\n"
-        if section_key == "topic_overview"
-        else ""
-    )
-
-    return (
-        f"Generate only this section: {section_key}.\n"
-        f"{title_instruction}"
-        f"Instruction: {STRUCTURED_NOTE_SECTION_INSTRUCTIONS[section_key]}\n"
-        f"Return JSON exactly matching this shape: {schema}\n\n"
-        "Transcript:\n"
-        "<<<\n"
-        f"{transcript}\n"
-        ">>>"
     )
 
 
@@ -554,15 +554,6 @@ def _normalize_structured_note_data(raw_data: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _extract_section_value(parsed: dict[str, Any], section_key: str) -> Any:
-    if section_key in parsed:
-        return parsed[section_key]
-    for fallback_key in ("items", "bullets", "questions", "subtopics", "content"):
-        if fallback_key in parsed:
-            return parsed[fallback_key]
-    return None
-
-
 def _validate_structured_note_data(note_data: dict[str, Any]) -> list[str]:
     issues: list[str] = []
     for key in STRUCTURED_NOTE_SCHEMA_KEYS:
@@ -791,7 +782,7 @@ class GeminiLLMAdapter:
         )
 
         chunk_size = self.config.resolve_chunk_size(len(raw_text))
-        from lecture_auto.stt_refinement import segment_chunks
+        from lecture_auto.stt_refinement import segment_chunks, chunk_refinement_evidence
 
         chunks = segment_chunks(
             raw_text,
@@ -801,10 +792,10 @@ class GeminiLLMAdapter:
         refined_chunks = []
 
         try:
-            for chunk in chunks:
+            for chunk, chunk_evidence in zip(chunks, chunk_refinement_evidence(raw_text, chunks, evidence)):
                 prompt = _build_transcript_refinement_prompt(
                     chunk,
-                    evidence=evidence,
+                    evidence=chunk_evidence,
                 )
 
                 config_dict: dict = {"system_instruction": system_instructions}
@@ -820,6 +811,7 @@ class GeminiLLMAdapter:
                     contents=prompt,
                     config=config_dict,  # type: ignore
                 )
+                _log_llm_usage("gemini", "refine", response)
                 text = (getattr(response, "text", "") or "").strip()
                 refined_chunks.append(text)
                 
@@ -887,7 +879,7 @@ class GeminiLLMAdapter:
                         )
                     uploaded_file = self.client.files.upload(**upload_kwargs)
                     material_note = (
-                        " A lecture material PDF has been provided as supporting context. "
+                        " A lecture material reference has been provided as supporting context. "
                         "Use it to verify terminology, structure, formulas, and examples, while prioritizing the transcript."
                     )
 
@@ -910,6 +902,25 @@ class GeminiLLMAdapter:
             )
 
             try:
+                if uploaded_file:
+                    reference_response = self.client.models.generate_content(
+                        model=self._normalize_model_name(self.config.model_name),
+                        contents=[
+                            "Extract a compact lecture-material reference in at most 8000 characters. "
+                            "Preserve technical terms, exact formulas, structure and named examples. "
+                            "Do not invent facts. Return plain text only.",
+                            uploaded_file,
+                        ],
+                        config={"max_output_tokens": 4096},
+                    )
+                    _log_llm_usage("gemini", "material_reference", reference_response)
+                    reference = (getattr(reference_response, "text", "") or "").strip()
+                    if not reference:
+                        raise ValueError("Lecture material reference extraction returned empty text.")
+                    config_dict["system_instruction"] += (
+                        "\nMaterial reference (spelling/context only; not proof of spoken facts):\n"
+                        + reference[:8000]
+                    )
                 note_chunk_size = self.config.resolve_chunk_size(len(transcript))
                 chunks = _iter_text_chunks(transcript, note_chunk_size)
                 chunk_notes: list[dict[str, Any]] = []
@@ -923,13 +934,12 @@ class GeminiLLMAdapter:
                                 chunk_count=len(chunks),
                             )
                         ]
-                        if uploaded_file:
-                            chunk_contents.append(uploaded_file)
                         chunk_response = self.client.models.generate_content(
                             model=self._normalize_model_name(self.config.model_name),
                             contents=chunk_contents,
                             config=config_dict,  # type: ignore
                         )
+                        _log_llm_usage("gemini", "note_chunk", chunk_response)
                         chunk_text = (getattr(chunk_response, "text", "") or "").strip()
                         chunk_notes.append(
                             _normalize_structured_note_data(_extract_json_object(chunk_text))
@@ -938,8 +948,6 @@ class GeminiLLMAdapter:
                     merge_contents: list = [
                         _build_structured_notes_merge_prompt(chunk_notes=chunk_notes)
                     ]
-                    if uploaded_file:
-                        merge_contents.append(uploaded_file)
                     response = self.client.models.generate_content(
                         model=self._normalize_model_name(self.config.model_name),
                         contents=merge_contents,
@@ -947,14 +955,13 @@ class GeminiLLMAdapter:
                     )
                 else:
                     contents: list = [_build_structured_notes_json_prompt(transcript=transcript)]
-                    if uploaded_file:
-                        contents.append(uploaded_file)
                     response = self.client.models.generate_content(
                         model=self._normalize_model_name(self.config.model_name),
                         contents=contents,
                         config=config_dict,  # type: ignore
                     )
 
+                _log_llm_usage("gemini", "note_merge" if chunk_notes else "notes", response)
                 raw_text = (getattr(response, "text", "") or "").strip()
                 note_data = _normalize_structured_note_data(_extract_json_object(raw_text))
                 issues = _validate_structured_note_data(note_data)
@@ -972,13 +979,12 @@ class GeminiLLMAdapter:
                             issues=issues,
                         )
                     ]
-                    if uploaded_file:
-                        repair_contents.append(uploaded_file)
                     repair_response = self.client.models.generate_content(
                         model=self._normalize_model_name(self.config.model_name),
                         contents=repair_contents,
                         config=config_dict,  # type: ignore
                     )
+                    _log_llm_usage("gemini", "note_repair", repair_response)
                     repair_text = (getattr(repair_response, "text", "") or "").strip()
                     note_data = _normalize_structured_note_data(
                         _extract_json_object(repair_text)
@@ -1050,7 +1056,7 @@ class OllamaLLMAdapter:
         )
 
         chunk_size = self.config.resolve_chunk_size(len(raw_text))
-        from lecture_auto.stt_refinement import segment_chunks
+        from lecture_auto.stt_refinement import segment_chunks, chunk_refinement_evidence
 
         chunks = segment_chunks(
             raw_text,
@@ -1060,10 +1066,10 @@ class OllamaLLMAdapter:
         refined_chunks = []
 
         try:
-            for chunk in chunks:
+            for chunk, chunk_evidence in zip(chunks, chunk_refinement_evidence(raw_text, chunks, evidence)):
                 prompt = _build_transcript_refinement_prompt(
                     chunk,
-                    evidence=evidence,
+                    evidence=chunk_evidence,
                 )
 
                 try:
@@ -1074,6 +1080,7 @@ class OllamaLLMAdapter:
                             {"role": "user", "content": prompt}
                         ]
                     )
+                    _log_llm_usage("ollama", "refine", response)
                     text = response.get("message", {}).get("content", "").strip()
                     refined_chunks.append(text)
                 except Exception as exc:
@@ -1103,6 +1110,7 @@ class OllamaLLMAdapter:
         system_instructions: str,
         prompt: str,
         expected_schema: str,
+        stage: str = "notes",
     ) -> dict[str, Any]:
         response = self.ollama.chat(
             model=self.config.model_name,
@@ -1112,6 +1120,7 @@ class OllamaLLMAdapter:
             ],
             format="json",
         )
+        _log_llm_usage("ollama", stage, response)
         raw_text = response.get("message", {}).get("content", "").strip()
 
         try:
@@ -1132,6 +1141,7 @@ class OllamaLLMAdapter:
                 ],
                 format="json",
             )
+            _log_llm_usage("ollama", "syntax_repair", repair_response)
             repaired_text = (
                 repair_response.get("message", {}).get("content", "").strip()
             )
@@ -1173,6 +1183,7 @@ class OllamaLLMAdapter:
             if len(chunks) > 1:
                 for index, chunk in enumerate(chunks, start=1):
                     parsed_chunk = self._chat_for_structured_json(
+                        stage="note_chunk",
                         system_instructions=system_instructions,
                         prompt=_build_structured_notes_chunk_prompt(
                             transcript=chunk,
@@ -1186,6 +1197,7 @@ class OllamaLLMAdapter:
                     )
 
                 raw_note_data = self._chat_for_structured_json(
+                    stage="note_merge",
                     system_instructions=system_instructions,
                     prompt=_build_structured_notes_merge_prompt(
                         chunk_notes=chunk_notes
@@ -1193,20 +1205,11 @@ class OllamaLLMAdapter:
                     expected_schema=STRUCTURED_NOTE_SCHEMA_DESCRIPTION,
                 )
             else:
-                for section_key in STRUCTURED_NOTE_SCHEMA_KEYS:
-                    prompt = _build_structured_note_section_prompt(
-                        transcript=transcript,
-                        section_key=section_key,
-                    )
-                    expected_schema = _structured_note_section_schema(section_key)
-                    parsed = self._chat_for_structured_json(
-                        system_instructions=system_instructions,
-                        prompt=prompt,
-                        expected_schema=expected_schema,
-                    )
-                    if section_key == "topic_overview":
-                        raw_note_data["note_title"] = parsed.get("note_title")
-                    raw_note_data[section_key] = _extract_section_value(parsed, section_key)
+                raw_note_data = self._chat_for_structured_json(
+                    system_instructions=system_instructions,
+                    prompt=_build_structured_notes_json_prompt(transcript=transcript),
+                    expected_schema=STRUCTURED_NOTE_SCHEMA_DESCRIPTION,
+                )
 
             note_data = _normalize_structured_note_data(raw_note_data)
             issues = _validate_structured_note_data(note_data)
@@ -1223,6 +1226,7 @@ class OllamaLLMAdapter:
                     issues=issues,
                 )
                 repaired_data = self._chat_for_structured_json(
+                    stage="note_repair",
                     system_instructions=system_instructions,
                     prompt=repair_prompt,
                     expected_schema=STRUCTURED_NOTE_SCHEMA_DESCRIPTION,

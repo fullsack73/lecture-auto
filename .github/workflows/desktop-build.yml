@@ -74,6 +74,10 @@ jobs:
         with:
           name: lecture-auto-linux
           path: release-assets
+      - uses: actions/download-artifact@v5
+        with:
+          name: lecture-auto-macos
+          path: release-assets
       - name: Flatten release assets
         run: |
           find release-assets -mindepth 2 -type f -exec mv --target-directory=release-assets {} +

@@ -384,3 +384,12 @@ For system audio recording, also check your loopback device setup.
 ### PPT/PPTX Material Import Fails
 
 PPT/PPTX conversion requires LibreOffice. Install it in the user runtime from Settings add-ons or run `lecture-auto runtime install --feature libreoffice`. Windows and Linux support x86-64 and ARM64; installation on Linux requires Python 3.11.4 or later. Standard LibreOffice does not support modern HWP/HWPX conversion.
+
+## LLM input usage
+
+Refinement sends only ASR evidence aligned with the current chunk. Gemini reads an
+attached PDF once per note-generation job and reuses a reference of up to 8,000
+characters; some material details may be compressed. Saving an unchanged preview
+reuses its notes without another LLM call. Restarting the app or reapplying settings
+clears previews. Request stages and available provider token counts are logged to
+`~/.lecture_auto/logs/llm-usage.jsonl`, without lecture content or credentials.

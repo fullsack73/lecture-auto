@@ -67,6 +67,8 @@ PySide6 기반으로 같은 workspace와 세션 데이터를 공유한다. 세�
 ### 노트와 library
 
 - transcript와 선택적 수업 자료 context를 바탕으로 구조화 강의 노트 생성
+- Gemini PDF는 작업당 한 번 참고문으로 추출하고 재사용
+- 입력이 같은 노트 미리보기는 저장 시 추가 생성 없이 재사용
 - transcript의 중심 주제를 반영한 내용 기반 노트 제목 생성
 - `Topic Overview`, `Core Concepts`, `Detailed Explanations`, `Examples Mentioned`, `Questions to Review`, `Exam related mentions` 섹션 유지
 - 세션, 노트, 전사문, 녹음 파일 검색/목록/열기

@@ -100,3 +100,74 @@ def test_summarize_save_writes_and_overwrites_note_file(tmp_path: Path) -> None:
     note_path = tmp_path / "notes" / "course-1" / "session-old.md"
     assert note_path.exists()
     assert note_path.read_text(encoding="utf-8") == "second notes"
+
+
+def test_save_reuses_preview_once_and_writes_identical_notes(tmp_path):
+    service, adapter = _build_service(tmp_path)
+    preview = service.summarize_session("session-new", preview=True)
+    saved = service.summarize_session("session-new")
+    assert adapter.generate_notes.call_count == 1
+    assert (tmp_path / saved.payload["note_file_path"]).read_text() == preview.payload["notes"]
+    service.summarize_session("session-new")
+    assert adapter.generate_notes.call_count == 2
+
+
+@pytest.mark.parametrize("changed", ["transcript", "title", "course", "material", "model", "language", "template"])
+def test_preview_invalidated_when_inputs_change(tmp_path, monkeypatch, changed):
+    from lecture_auto.llm_config import LLMConfig
+    service, adapter = _build_service(tmp_path)
+    adapter.config = LLMConfig(provider="ollama")
+    session = service.store.get_by_session_id("session-new")
+    material = tmp_path / "materials/session-new.pdf"
+    material.parent.mkdir(exist_ok=True)
+    material.write_bytes(b"first PDF")
+    session["material_file_path"] = "materials/session-new.pdf"
+    service.store.upsert(session)
+    service.summarize_session("session-new", preview=True)
+    if changed == "transcript":
+        (tmp_path / service.store.get_by_session_id("session-new")["transcript_file_path"]).write_text("changed")
+    elif changed in ("title", "course"):
+        session[changed] = "changed"
+        service.store.upsert(session)
+    elif changed == "material":
+        material.write_bytes(b"other PDF")
+    elif changed in ("model", "language"):
+        setattr(adapter.config, "model_name" if changed == "model" else "language", "changed")
+    else:
+        monkeypatch.setattr(service, "_resolve_note_template", lambda _: ("structured-notes", "changed template"))
+    service.summarize_session("session-new")
+    assert adapter.generate_notes.call_count == 2
+
+
+def test_failed_or_canceled_preview_cannot_be_saved_from_cache(tmp_path):
+    from lecture_auto.session_service import SessionCommandError
+    from lecture_auto.tasking import CancellationToken, TaskCancelledError
+    service, adapter = _build_service(tmp_path)
+    service.summarize_session("session-new", preview=True)
+    adapter.generate_notes.side_effect = RuntimeError("failed")
+    with pytest.raises(SessionCommandError):
+        service.summarize_session("session-new", preview=True)
+    assert not service._note_previews
+    token = CancellationToken()
+    def cancel(**kwargs):
+        token.cancel()
+        return "canceled notes"
+    adapter.generate_notes.side_effect = cancel
+    with pytest.raises(TaskCancelledError):
+        service.summarize_session("session-new", preview=True, cancellation_token=token)
+    assert not service._note_previews
+    adapter.generate_notes.side_effect = None
+    service.summarize_session("session-new")
+    assert adapter.generate_notes.call_count == 4
+
+
+def test_preview_cache_keeps_only_eight_sessions(tmp_path):
+    service, adapter = _build_service(tmp_path)
+    original = service.store.get_by_session_id("session-new")
+    for i in range(9):
+        relative = f"transcripts/s-{i}-raw.md"
+        (tmp_path / relative).write_text("synthetic lecture")
+        service.store.upsert({**original, "session_id": f"s-{i}", "transcript_file_path": relative})
+        service.summarize_session(f"s-{i}", preview=True)
+    assert len(service._note_previews) == 8
+    assert "s-0" not in service._note_previews

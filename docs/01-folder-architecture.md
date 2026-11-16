@@ -113,3 +113,7 @@ segment timestamp, confidence, 선택적 word timestamp를 보존하는 versione
 통합 diff를 보존하며 기존 transcript 파일 형식에는 영향을 주지 않는다.
 개발용 `scripts/benchmark_local_stt.py`는 저장소 밖 또는 ignore 대상 녹음 corpus를 읽고
 `build/stt-benchmarks/`에만 비교 결과를 만든다.
+
+LLM 진단 로그는 workspace와 별도로 `~/.lecture_auto/logs/llm-usage.jsonl`에 둔다.
+요청 단계와 provider 사용량 숫자만 보관하며 콘텐츠와 자격 증명은 포함하지 않는다.
+노트 미리보기 재사용 상태는 SessionService 메모리에만 두고 파일/schema를 추가하지 않는다.

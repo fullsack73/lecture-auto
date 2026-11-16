@@ -6,7 +6,7 @@ from scripts.project_version import read_project_version
 def test_release_builders_use_pyproject_version() -> None:
     root = Path(__file__).resolve().parents[1]
 
-    assert read_project_version(root) == "0.1.15"
+    assert read_project_version(root) == "0.1.16"
     pyproject = (root / "pyproject.toml").read_text()
     assert '"PySide6>=6.8,<6.12"' in pyproject
     assert '"nuitka==4.1.3"' in pyproject
@@ -37,3 +37,6 @@ def test_release_builders_use_pyproject_version() -> None:
     workflow = (root / ".github/workflows/desktop-build.yml").read_text()
     assert 'APP="build/macos/Lecture Auto.app"' in workflow
     assert 'test -d "$APP"' in workflow
+
+    assert "name: lecture-auto-macos" in workflow
+    assert "sha256sum * > SHA256SUMS.txt" in workflow

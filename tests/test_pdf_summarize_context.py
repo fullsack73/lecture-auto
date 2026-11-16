@@ -149,7 +149,10 @@ def test_gemini_adapter_uploads_and_deletes_file() -> None:
         assert upload_kwargs["config"].mime_type == "application/pdf"
 
         generate_kwargs = mock_client.models.generate_content.call_args.kwargs
-        assert generate_kwargs["contents"][-1] is mock_upload
+        calls = mock_client.models.generate_content.call_args_list
+        assert calls[0].kwargs["contents"][-1] is mock_upload
+        assert all(mock_upload not in c.kwargs["contents"] for c in calls[1:])
+        assert "Material reference" in generate_kwargs["config"]["system_instruction"]
         assert generate_kwargs["config"]["response_mime_type"] == "application/json"
         mock_client.files.delete.assert_called_once_with(name="uploaded_file_name_123")
 
@@ -219,3 +222,45 @@ def test_gemini_adapter_repairs_json_and_renders_structured_markdown() -> None:
     repair_prompt = mock_client.models.generate_content.call_args_list[1].kwargs["contents"][0]
     assert "Repair this JSON" in repair_prompt
     assert "# ignored template" not in repair_prompt
+
+
+def test_pdf_is_read_once_for_chunk_merge_and_repair():
+    with patch("google.genai.Client") as client_cls, patch("os.path.exists", return_value=True):
+        adapter = GeminiLLMAdapter(LLMConfig(api_key="fake", chunk_size=500))
+        client = client_cls.return_value
+        uploaded = client.files.upload.return_value
+        uploaded.name = "files/reference"
+        reference = "Exact formula: E = mc^2; terminology: Eigenvalue.\n" + "context " * 1500
+        def generate(**kwargs):
+            prompt = kwargs["contents"][0]
+            if prompt.startswith("Extract a compact"):
+                return MagicMock(text=reference)
+            if prompt.startswith("Merge these"):
+                return MagicMock(text=json.dumps(_note_payload(detailed_title="Sub Topic 1")))
+            return MagicMock(text=json.dumps(_note_payload()))
+        client.models.generate_content.side_effect = generate
+        notes = adapter.generate_notes("lecture content. " * 200, "template", material_path="input.pdf")
+        calls = client.models.generate_content.call_args_list
+        assert len(calls) > 4
+        assert sum(any(item is uploaded for item in c.kwargs["contents"]) for c in calls) == 1
+        for call in calls[1:]:
+            system = call.kwargs["config"]["system_instruction"]
+            actual_reference = system.split("not proof of spoken facts):\n", 1)[1]
+            assert len(actual_reference) == 8000
+            assert "E = mc^2" in actual_reference
+            assert "Eigenvalue" in actual_reference
+        assert "Repair this JSON" in calls[-1].kwargs["contents"][0]
+        assert notes.startswith("# Topic A")
+        client.files.delete.assert_called_once_with(name=uploaded.name)
+
+
+def test_empty_pdf_reference_fails_without_repeating_pdf():
+    with patch("google.genai.Client") as client_cls, patch("os.path.exists", return_value=True):
+        adapter = GeminiLLMAdapter(LLMConfig(api_key="fake"))
+        client = client_cls.return_value
+        client.models.generate_content.return_value = MagicMock(text="")
+        client.files.upload.return_value.name = "files/reference"
+        with pytest.raises(Exception, match="reference extraction returned empty"):
+            adapter.generate_notes("lecture", "template", material_path="input.pdf")
+        assert client.models.generate_content.call_count == 1
+        client.files.delete.assert_called_once_with(name="files/reference")

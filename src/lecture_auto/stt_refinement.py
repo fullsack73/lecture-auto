@@ -32,7 +32,7 @@ class RefinementAudit:
 def build_refinement_evidence(
     metadata: dict[str, Any] | None,
     *,
-    max_segments: int = 80,
+    max_segments: int | None = None,
 ) -> dict[str, object]:
     metadata = metadata or {}
     segments = metadata.get("segments") or []
@@ -62,6 +62,59 @@ def build_refinement_evidence(
             "[불명확 mm:ss] only when multiple plausible readings remain."
         ),
     }
+
+
+def chunk_refinement_evidence(
+    raw_text: str, chunks: list[str], evidence: dict[str, object] | None,
+) -> list[dict[str, object] | None]:
+    """Align ASR text once, then send only each chunk's supporting evidence."""
+    if not evidence:
+        return [None] * len(chunks)
+    aligned = []
+    cursor = 0
+    segments = evidence.get("segments")
+    for segment in segments if isinstance(segments, list) else []:
+        if not isinstance(segment, dict) or not isinstance(segment.get("text"), str):
+            continue
+        words = segment["text"].split()
+        if not words:
+            continue
+        match = re.compile(r"\s+".join(re.escape(word) for word in words)).search(raw_text, cursor)
+        if match is not None:
+            start, end = match.start(), match.end()
+            aligned.append((start, end, segment))
+            cursor = end
+    result = []
+    cursor = 0
+    for chunk in chunks:
+        start = raw_text.find(chunk, cursor)
+        end = start + len(chunk)
+        cursor = end if start >= 0 else cursor
+        matches = [i for i, (left, right, _) in enumerate(aligned)
+                   if start >= 0 and left < end and right > start]
+        selected = (aligned[max(0, matches[0] - 1):matches[-1] + 2] if matches else [])[:80]
+        scoped: dict[str, object] = {
+            "rule": evidence.get("rule"),
+            "glossary": str(evidence.get("glossary") or "")[:1000],
+            "segments": [
+                {**segment, "text": raw_text[max(left, start - 240):min(right, end + 240)]}
+                for left, right, segment in selected
+            ],
+        }
+        passes = evidence.get("asr_passes")
+        pairs = passes.get("candidate_pairs") if isinstance(passes, dict) else None
+        if selected and isinstance(pairs, list):
+            low = selected[0][2].get("start_time")
+            high = selected[-1][2].get("end_time")
+            if isinstance(low, (int, float)) and isinstance(high, (int, float)):
+                scoped["asr_passes"] = {"candidate_pairs": [
+                    pair for pair in pairs if isinstance(pair, dict)
+                    and isinstance(pair.get("start_time"), (int, float))
+                    and isinstance(pair.get("end_time"), (int, float))
+                    and pair["start_time"] < high and pair["end_time"] > low
+                ][:20]}
+        result.append(scoped)
+    return result
 
 
 def format_refinement_evidence(evidence: dict[str, object] | None) -> str:
