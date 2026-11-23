@@ -37,6 +37,7 @@ from lecture_auto.session_metadata_store import SessionMetadataStore
 from lecture_auto.llm_adapter import (
     LLMProviderAdapter,
     LLMConfigError,
+    LLMNoteQualityError,
     LLMProviderAuthError,
     LLMTransientNetworkError,
 )
@@ -1700,6 +1701,13 @@ class SessionService:
                 context_topic=context_topic,
                 material_path=material_path,
             )
+        except LLMNoteQualityError as exc:
+            raise SessionCommandError(
+                code="NOTE_QUALITY_FAILED",
+                message=str(exc),
+                guidance="Review the transcript and try generating the note again.",
+                exit_code=1,
+            ) from exc
         except LLMConfigError as exc:
             raise SessionCommandError(
                 code="LLM_CONFIG_FAILED",

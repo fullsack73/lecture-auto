@@ -27,7 +27,9 @@ GEMINI_PACKAGES = ("google-genai>=1.0.0",)
 
 
 class LocalRuntimeError(RuntimeError):
-    pass
+    def __init__(self, message: str, *, code: str | None = None) -> None:
+        super().__init__(message)
+        self.code = code
 
 
 class LocalRuntimeMissingError(LocalRuntimeError):
@@ -773,6 +775,7 @@ class LocalRuntimeManager:
         started = time.monotonic()
         result: dict[str, Any] | None = None
         worker_error: str | None = None
+        worker_error_code: str | None = None
         while True:
             if token.is_cancelled:
                 process.terminate()
@@ -803,11 +806,15 @@ class LocalRuntimeManager:
                 value = event.get("result")
                 result = value if isinstance(value, dict) else {"value": value}
             elif event_type == "error":
+                worker_error_code = event.get("code")
                 worker_error = str(event.get("message") or event.get("code") or "Worker failed")
         return_code = process.wait()
         if return_code != 0 or worker_error:
             stderr = process.stderr.read().strip() if process.stderr else ""
-            raise LocalRuntimeError(worker_error or stderr[-2000:] or f"Local AI worker crashed with exit code {return_code}.")
+            raise LocalRuntimeError(
+                worker_error or stderr[-2000:] or f"Local AI worker crashed with exit code {return_code}.",
+                code=worker_error_code,
+            )
         if result is None:
             raise LocalRuntimeError("Local AI worker exited without a result event.")
         return result

@@ -17,7 +17,7 @@ Lecture Auto records lecture audio, transcribes it, refines the transcript, and 
 - Search and open generated notes, transcripts, and recordings
 - Use the desktop GUI, CLI commands, or the interactive TUI
 
-Notes always use the `structured-notes` format. With Ollama, the model does not write Markdown directly; it generates section JSON, and the app renders the final Markdown.
+Notes use the `structured-notes` format with step-by-step explanations and worked examples where the transcript supports them. The app reviews each draft for gaps and renders the final Markdown from the model's JSON.
 
 ## How to Install
 

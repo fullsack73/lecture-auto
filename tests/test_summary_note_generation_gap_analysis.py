@@ -6,6 +6,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from lecture_auto.llm_adapter import (
+    LLMNoteQualityError,
     LLMProviderAdapter,
     LLMProviderAuthError,
     LLMTransientNetworkError,
@@ -94,6 +95,23 @@ def test_summarize_id_for_session_with_no_transcript_fails(tmp_path: Path) -> No
         service.summarize_session(session_reference="session-402", preview=True)
 
     assert exc.value.code == "TRANSCRIPT_NOT_FOUND"
+
+
+def test_summarize_quality_failure_preserves_existing_note(tmp_path: Path) -> None:
+    service, llm_adapter = _service_with_session(tmp_path, _base_session())
+    transcript = tmp_path / "transcripts" / "cs301" / "session-401-raw.md"
+    transcript.parent.mkdir(parents=True)
+    transcript.write_text("transcript", encoding="utf-8")
+    note = tmp_path / "notes" / "cs301" / "session-401.md"
+    note.parent.mkdir(parents=True)
+    note.write_text("existing study note", encoding="utf-8")
+    llm_adapter.generate_notes.side_effect = LLMNoteQualityError("Missing worked steps after repair.")
+
+    with pytest.raises(SessionCommandError) as exc:
+        service.summarize_session("session-401")
+
+    assert exc.value.code == "NOTE_QUALITY_FAILED"
+    assert note.read_text(encoding="utf-8") == "existing study note"
 
 
 def test_summarize_overwrites_existing_note_file(tmp_path: Path) -> None:

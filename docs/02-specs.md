@@ -166,7 +166,7 @@ LLM 요청별 단계·호출 수·시간과 provider가 제공한 입력/출력/
 전사문, 자료 내용, API key는 기록하지 않으며 사용량 필드 누락이나 로그 저장 실패는
 생성 작업을 중단하지 않는다. 로그의 requests는 완료된 SDK 호출 수이며 내부 HTTP
 재시도 횟수나 실패 응답의 토큰 사용량을 나타내지 않는다. 정제 요청은 본문·보조 문맥·system instruction의
-문자 수도 분리해서 기록한다. Ollama의 짧은 노트도 전체 JSON을 한 번에 생성한다.
+문자 수도 분리해서 기록한다. 노트 내용 검토는 `note_audit` 단계로 기록한다.
 
 LLM refine는 raw sidecar의 timestamp, confidence, 1차/2차 ASR 정보를 선택적 evidence로
 받는다. 문장부호·띄어쓰기·문장 경계·무의미 반복뿐 아니라 강의 주제와 인접 문장으로
@@ -185,14 +185,21 @@ benchmark 결과는 CER/WER, 용어 recall, 숫자·수식 recall, 누락률, �
 최상위 Markdown 제목은 고정 문구가 아니라 transcript의 중심 주제를 요약한 `note_title`로 생성한다.
 provider가 제목을 누락하거나 일반적인 제목을 반환하면 첫 번째 topic overview 항목을 호환 fallback으로 사용한다.
 
-Ollama 노트 생성은 모델에 Markdown 작성을 직접 맡기지 않고 다음 경로를 따른다.
+Gemini와 Ollama 노트 생성은 같은 흐름을 따르고 앱이 최종 Markdown을 렌더링한다.
 
 ```text
-transcript + materials context
-  → note title + section JSON generation
-  → validation / optional repair
-  → application Markdown render
+transcript → 긴 경우 문장 경계로 분할하고 번호별 근거 추출
+  → 주제별 JSON 초안
+  → 내용 검토 → 필요 시 관련 원문으로 문제 섹션 1회 보완 후 재검토
+  → Markdown 렌더링
 ```
+
+긴 전사는 조각별 앞뒤 최대 240자의 보조 문맥을 사용한다. 조각에서 정의·조건·작동 단계·
+수식·코드·예제의 입력과 결과를 추출한 뒤 주제별로 정리한다. 짧은 전사는 원문에서
+바로 초안을 만든다. 본문에는 입력, 동작, 이유와 조건을 원문이 뒷받침하는 깊이까지
+설명하고 예제 풀이를 관련 주제에 배치한다. 독립 수식과 코드는 블록으로 렌더링한다.
+검토는 놓친 인과관계·단계·결과, 근거 없는 주장과 본문으로 풀 수 없는 복습 질문을
+확인한다. 보완 후에도 문제가 남으면 `NOTE_QUALITY_FAILED`를 반환해 기존 노트를 보존한다.
 
 이 규칙을 바꾸면 `llm_adapter.py`, 관련 테스트, `src/lecture_auto/templates/structured-notes.md`, 사용자 문서를 함께 검토한다.
 

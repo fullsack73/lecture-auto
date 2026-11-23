@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
+import sys
 import pytest
 from unittest.mock import MagicMock, patch
 
@@ -10,6 +12,7 @@ from lecture_auto.llm_config import LLMConfig
 from lecture_auto.llm_adapter import (
     GeminiLLMAdapter,
     LLMConfigError,
+    LLMNoteQualityError,
     _apply_thinking_config,
     _extract_json_object,
     _normalize_structured_note_data,
@@ -77,6 +80,24 @@ def test_gemini_adapter_can_delegate_to_post_install_addon() -> None:
     assert adapter.refine_transcript("raw") == "add-on result"
 
 
+def test_gemini_addon_preserves_the_note_quality_error(tmp_path, monkeypatch) -> None:
+    from lecture_auto.local_runtime import LocalRuntimeManager
+
+    worker = tmp_path / "gemini_worker.py"
+    worker.write_text(
+        'import sys\nsys.stdin.readline()\n'
+        'print(\'{"type":"error","code":"LLMNoteQualityError","message":"Missing formula inputs."}\')\n'
+        'sys.exit(1)\n',
+        encoding="utf-8",
+    )
+    runtime = LocalRuntimeManager(runtime_dir=tmp_path / "runtime", gemini_worker_script=worker)
+    monkeypatch.setattr(runtime, "python_for", lambda feature: Path(sys.executable))
+    adapter = GeminiLLMAdapter(LLMConfig(api_key="fake"), runtime_manager=runtime, use_addon=True)
+
+    with pytest.raises(LLMNoteQualityError, match="Missing formula inputs"):
+        adapter.generate_notes("A sample transcript.", "# Test")
+
+
 def test_gemini_adapter_refine_transcript_empty_text() -> None:
     config = LLMConfig(api_key="valid-key")
     with patch("google.genai.Client"):
@@ -134,7 +155,7 @@ def test_refine_transcript_uses_lecture_transcript_editor_prompt() -> None:
     assert "<<<\nraw transcript\n>>>" in contents
 
 
-def test_gemini_notes_use_chunk_merge_for_long_transcripts() -> None:
+def test_gemini_notes_extract_evidence_and_repair_a_gap_from_its_original_chunk() -> None:
     mock_client_instance = MagicMock()
 
     payload = {
@@ -182,10 +203,42 @@ def test_gemini_notes_use_chunk_merge_for_long_transcripts() -> None:
         "exam_related_mentions": ["Not mentioned."],
     }
 
+    audit_count = 0
+
     def generate_content(**kwargs):
-        response = MagicMock()
-        response.text = json.dumps(payload)
-        return response
+        nonlocal audit_count
+        prompt = kwargs["contents"][0]
+        if prompt.startswith("Chunk: "):
+            assert "note_title" not in kwargs["config"]["system_instruction"]
+            data = {"evidence": [{
+                "topic": "BFS",
+                "detail": "The queue visits B and C before the next layer, including D.",
+            }]}
+        elif prompt.startswith("Build the final study note"):
+            assert "visits B and C before the next layer" in prompt
+            assert "UNRELATED ORIGINAL" not in prompt
+            data = payload
+        elif prompt.startswith("Repair this JSON"):
+            assert "ORIGINAL EXAMPLE" in prompt
+            assert "UNRELATED ORIGINAL" not in prompt
+            data = {"detailed_explanations": [{
+                "title": "Breadth-First Search Mechanics",
+                "bullets": ["Starting at A, enqueue B and C. Pop B and enqueue D behind C, so C is expanded before D."],
+            }, payload["detailed_explanations"][1]]}
+        else:
+            assert "Study note:" in prompt
+            audit_count += 1
+            data = {"issues": []}
+            if audit_count == 1:
+                data["issues"].append({
+                    "section": "detailed_explanations",
+                    "message": "Walk through the queue in the BFS example.",
+                    "chunk_ids": [1, 999],
+                })
+            else:
+                assert "ORIGINAL EXAMPLE" in prompt
+                assert "D behind C" in prompt
+        return MagicMock(text=json.dumps(data))
 
     mock_client_instance.models.generate_content.side_effect = generate_content
 
@@ -193,7 +246,8 @@ def test_gemini_notes_use_chunk_merge_for_long_transcripts() -> None:
     with patch("google.genai.Client", return_value=mock_client_instance):
         adapter = GeminiLLMAdapter(config)
 
-    transcript = "graph traversal lecture section " * 100
+    transcript = "ORIGINAL EXAMPLE: A enqueues B and C. " + "BFS uses a queue. " * 40
+    transcript += "UNRELATED ORIGINAL: " + "DFS uses a stack. " * 80
     notes = adapter.generate_notes(
         transcript,
         "# Structured Lecture Notes\n\n## Topic Overview",
@@ -204,11 +258,13 @@ def test_gemini_notes_use_chunk_merge_for_long_transcripts() -> None:
         for call in mock_client_instance.models.generate_content.call_args_list
     ]
 
-    assert mock_client_instance.models.generate_content.call_count > 2
+    assert audit_count == 2
     assert any("Chunk: 1 of" in content for content in contents)
-    assert "Merge these chunk-level lecture-note JSON objects" in contents[-1]
+    assert "Following context:" in contents[0]
     assert notes.startswith("# Graph Traversal: BFS, DFS, and Complexity")
     assert "### Breadth-First Search Mechanics" in notes
+    assert "C is expanded before D" in notes
+    assert "### Depth-First Search Mechanics" in notes
 
 
 def test_extract_json_object_preserves_latex_commands_that_look_like_json_escapes() -> None:

@@ -71,6 +71,7 @@ PySide6 기반으로 같은 workspace와 세션 데이터를 공유한다. 세�
 - Gemini PDF는 작업당 한 번 참고문으로 추출하고 재사용
 - 입력이 같은 노트 미리보기는 저장 시 추가 생성 없이 재사용
 - transcript의 중심 주제를 반영한 내용 기반 노트 제목 생성
+- 핵심 주제의 동작 과정, 이유, 성립 조건과 강의 예제 풀이를 담고 복습 질문의 답을 본문에서 확인
 - `Topic Overview`, `Core Concepts`, `Detailed Explanations`, `Examples Mentioned`, `Questions to Review`, `Exam related mentions` 섹션 유지
 - 세션, 노트, 전사문, 녹음 파일 검색/목록/열기
 

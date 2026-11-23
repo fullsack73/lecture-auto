@@ -56,11 +56,16 @@ STRUCTURED_NOTE_SCHEMA_DESCRIPTION = (
     '{"note_title":"...",'
     '"topic_overview":["..."],'
     '"core_concepts":["..."],'
-    '"detailed_explanations":[{"title":"...","bullets":["..."]}],'
+    '"detailed_explanations":[{"title":"...","bullets":["..."],'
+    '"blocks":[{"kind":"formula or code","text":"...","language":"..."}]}],'
     '"examples_mentioned":["..."],'
     '"questions_to_review":["..."],'
     '"exam_related_mentions":["..."]}'
 )
+
+NOTE_EVIDENCE_SCHEMA = '{"evidence":[{"topic":"...","detail":"..."}]}'
+NOTE_AUDIT_SCHEMA = '{"issues":[{"section":"...","message":"...","chunk_ids":[1]}]}'
+NOTE_CHUNK_CONTEXT = 240
 
 STRUCTURED_NOTE_TITLE_INSTRUCTION = (
     "Return one concise, content-specific title that identifies this lecture's central subject. "
@@ -74,26 +79,28 @@ STRUCTURED_NOTE_SECTION_INSTRUCTIONS = {
         "Each bullet should be specific to this lecture, not a generic course summary."
     ),
     "core_concepts": (
-        "Return 6-12 bullets defining key terms, concepts, formulas, named methods, and relationships "
-        "needed to understand the lecture."
+        "Define the terms and relationships needed to follow the explanations. Keep this a quick reference."
     ),
     "detailed_explanations": (
-        "Return 2-6 subtopics. Each subtopic needs a meaningful title and 4-8 bullets covering reasoning, "
-        "mechanisms, steps, formulas, tradeoffs, caveats, speaker emphasis, and important distinctions. "
-        "Bullets should be self-contained enough to study from without the transcript."
+        "Give each major topic enough room to explain the actual reasoning. Where supported, name the "
+        "inputs or starting state, explain what changes at each step and why, state the result and when it differs. "
+        "Connect causes to effects explicitly. Define symbols and give the instructor's worked examples beside "
+        "the relevant explanation, preserving inputs, intermediate steps and results. "
+        "Use bullets for prose and optional blocks for standalone formulas or code. "
+        "A block has kind 'formula' (LaTeX without math delimiters) or 'code' (raw code without fences, "
+        "with a language identifier if known). Describe code behavior in prose when no exact code is available."
     ),
     "examples_mentioned": (
-        "Return only examples explicitly mentioned in the transcript. If none, return ['Not mentioned.']."
+        "Index the examples actually explained in the lecture. Put their reasoning in detailed_explanations. "
+        "If no examples were given, return an empty array."
     ),
     "questions_to_review": (
-        "Return 4-8 core questions. If a student answers and explores these questions well, "
-        "they should be able to reconstruct the lecture's main content, logic, and implications. "
-        "Cover central concepts, causal relationships, mechanisms, assumptions, examples, contrasts, "
-        "and why ideas matter. Avoid trivia, narrow recall, and generic questions."
+        "Ask questions about mechanisms, conditions, or applications that can be answered from the note itself. "
+        "Cover the major topics without padding."
     ),
     "exam_related_mentions": (
         "Return only explicit grading, exam, homework, assignment, or assessment cues. "
-        "If none, return ['Not mentioned.']."
+        "If none, return an empty array."
     ),
 }
 
@@ -149,12 +156,12 @@ def _build_structured_notes_json_system_instruction(
     template_note: str = "",
 ) -> str:
     topic_prompt = f"Lecture topic: {context_topic}. " if context_topic else ""
-    lang_prompt = f"Write all JSON string values in {language}. " if language else ""
+    lang_prompt = f"Write the explanatory prose in {language}. " if language else ""
     return (
         "You extract structured lecture-note data from transcripts. "
         f"{topic_prompt}"
         f"{lang_prompt}"
-        "Return valid JSON only. No markdown. No code fence. No explanation. "
+        "Return valid JSON only, without an outer Markdown fence. "
         "If a string contains a literal backslash, escape it as a double backslash. "
         "Use transcript evidence only; do not invent facts. "
         "Preserve proper nouns, technical terms, equations, code, and quoted phrases from the transcript. "
@@ -163,15 +170,7 @@ def _build_structured_notes_json_system_instruction(
         f"Schema exactly: {STRUCTURED_NOTE_SCHEMA_DESCRIPTION}. "
         f"note_title: {STRUCTURED_NOTE_TITLE_INSTRUCTION} "
         f"Section requirements: {_format_structured_note_section_requirements()} "
-        "topic_overview: lecture scope and main arc. "
-        "core_concepts: key terms, definitions, relationships. "
-        "detailed_explanations: main mechanisms, reasoning, steps, formulas, tradeoffs, caveats. "
-        "examples_mentioned: examples explicitly stated. If none, use ['Not mentioned.']. "
-        "questions_to_review: 4-8 core questions that let a student reconstruct lecture content, logic, and implications if answered well. "
-        "Questions must cover central concepts, causal relationships, mechanisms, assumptions, examples, contrasts, and why ideas matter. "
-        "Avoid trivia, narrow recall, and generic questions. "
-        "exam_related_mentions: explicit grading, test, homework, assessment cues only. If none, use ['Not mentioned.']. "
-        "All bullet arrays must contain strings. detailed_explanations must be an array of objects with title and bullets. "
+        "All bullet arrays must contain strings. Omit blocks or use an empty array when there is no formula or code. "
         "Detailed explanation titles must be meaningful, never placeholders like 'Sub Topic 1'. "
         "Do not copy placeholder text from templates. "
         f"{template_note}"
@@ -211,51 +210,34 @@ def _build_structured_notes_json_prompt(*, transcript: str) -> str:
 
 def _build_structured_notes_chunk_prompt(
     *,
-    transcript: str,
-    chunk_index: int,
-    chunk_count: int,
+    chunks: list[str],
+    index: int,
 ) -> str:
+    previous = chunks[index - 1][-NOTE_CHUNK_CONTEXT:] if index else ""
+    following = chunks[index + 1][:NOTE_CHUNK_CONTEXT] if index + 1 < len(chunks) else ""
     return (
-        "Extract candidate structured lecture-note JSON from this transcript chunk. "
-        "Use only evidence in this chunk. Preserve order, terminology, formulas, examples, and instructor cues. "
-        "Sparse sections may be concise, but keep concrete details for later merging. "
-        "Return every schema key exactly once. Return JSON only.\n\n"
-        f"Chunk: {chunk_index} of {chunk_count}\n"
-        f"JSON shape: {STRUCTURED_NOTE_SCHEMA_DESCRIPTION}\n\n"
-        "Transcript chunk:\n"
-        "<<<\n"
-        f"{transcript}\n"
-        ">>>"
-    )
-
-
-def _build_structured_notes_merge_prompt(*, chunk_notes: list[dict[str, Any]]) -> str:
-    return (
-        "Merge these chunk-level lecture-note JSON objects into one complete study-note JSON object. "
-        "Deduplicate repeated ideas, preserve lecture order, keep important details, and synthesize related points. "
-        "Do not invent facts beyond the chunk notes. "
-        "Return every schema key exactly once. Return JSON only.\n\n"
-        f"JSON shape: {STRUCTURED_NOTE_SCHEMA_DESCRIPTION}\n\n"
-        "Chunk notes:\n"
-        f"{json.dumps(chunk_notes, ensure_ascii=False)}"
+        f"Chunk: {index + 1} of {len(chunks)}\n"
+        f"Required JSON shape: {NOTE_EVIDENCE_SCHEMA}\n"
+        "Previous and following context can clarify sentences. Extract details anchored in the target chunk.\n"
+        f"Previous context: {previous}\n"
+        f"Transcript chunk:\n<<<\n{chunks[index]}\n>>>\n"
+        f"Following context: {following}"
     )
 
 
 def _build_structured_notes_repair_prompt(
     *,
-    transcript: str,
+    sources: dict[int, str],
     previous_json: dict[str, Any],
-    issues: list[str],
+    issues: dict[str, list[str]],
 ) -> str:
     return (
-        "Repair this JSON so it satisfies the schema and fixes all issues. "
-        "Return valid JSON only.\n\n"
+        "Repair this JSON using the numbered original transcript chunks. "
+        "Return complete replacement values only for the section keys listed under Issues. "
+        "Inside each replacement, preserve correct explanations and examples and fix the specific gaps.\n\n"
         f"Issues:\n{json.dumps(issues, ensure_ascii=False)}\n\n"
         f"Previous JSON:\n{json.dumps(previous_json, ensure_ascii=False)}\n\n"
-        "Transcript evidence:\n"
-        "<<<\n"
-        f"{transcript}\n"
-        ">>>"
+        f"Original transcript chunks:\n{json.dumps(sources, ensure_ascii=False)}"
     )
 
 
@@ -370,6 +352,9 @@ _LATEX_JSON_COMMAND_PREFIXES = (
     "to",
     "in",
 )
+_LATEX_JSON_COMMAND = re.compile(
+    r"(?:" + "|".join(_LATEX_JSON_COMMAND_PREFIXES) + r")(?![A-Za-z])"
+)
 
 
 def _escape_latex_json_backslashes(candidate: str) -> str:
@@ -394,7 +379,7 @@ def _escape_latex_json_backslashes(candidate: str) -> str:
             continue
 
         if char == "\\":
-            if _starts_latex_command(candidate, i + 1):
+            if _LATEX_JSON_COMMAND.match(candidate, i + 1):
                 result.append("\\\\")
                 i += 1
                 continue
@@ -413,53 +398,14 @@ def _escape_latex_json_backslashes(candidate: str) -> str:
     return "".join(result)
 
 
-def _starts_latex_command(candidate: str, start_index: int) -> bool:
-    remaining = candidate[start_index:]
-    return any(
-        remaining.startswith(command)
-        for command in _LATEX_JSON_COMMAND_PREFIXES
-    )
-
-
 def _escape_invalid_json_backslashes(candidate: str) -> str:
     return re.sub(r'\\(?!["\\/bfnrtu])', r"\\\\", candidate)
 
 
-def _iter_text_chunks(text: str, chunk_size: int) -> list[str]:
-    chunks: list[str] = []
-    start_idx = 0
-    text_length = len(text)
-    while start_idx < text_length:
-        end_idx = min(start_idx + chunk_size, text_length)
-
-        if end_idx < text_length:
-            last_break = max(
-                text.rfind("\n\n", start_idx, end_idx),
-                text.rfind("\n", start_idx, end_idx),
-                text.rfind(" ", start_idx, end_idx),
-            )
-            if last_break > start_idx + chunk_size // 2:
-                end_idx = last_break
-
-        chunk = text[start_idx:end_idx].strip()
-        if chunk:
-            chunks.append(chunk)
-
-        start_idx = end_idx
-        while start_idx < text_length and text[start_idx].isspace():
-            start_idx += 1
-
-    return chunks
-
-
 def _clean_note_item(value: Any) -> str | None:
-    if value is None:
+    if not isinstance(value, str):
         return None
-    text = str(value).strip()
-    if not text:
-        return None
-    while text.startswith(("-", "*", "•")):
-        text = text[1:].strip()
+    text = re.sub(r"^(?:[-*]\s+|•\s*)+", "", value.strip())
     return text or None
 
 
@@ -471,6 +417,24 @@ def _normalize_note_list(value: Any) -> list[str]:
         items = [_clean_note_item(item) for item in value]
         return [item for item in items if item]
     return []
+
+
+def _normalize_note_blocks(value: Any) -> list[dict[str, str]]:
+    if not isinstance(value, list):
+        return []
+    blocks = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        kind, content = item.get("kind"), item.get("text")
+        if kind not in ("formula", "code") or not isinstance(content, str) or not content.strip():
+            continue
+        block = {"kind": kind, "text": content.strip("\r\n")}
+        language = item.get("language")
+        if kind == "code" and isinstance(language, str) and re.fullmatch(r"[\w+#.-]+", language):
+            block["language"] = language
+        blocks.append(block)
+    return blocks
 
 
 def _normalize_detailed_explanations(value: Any) -> list[dict[str, Any]]:
@@ -497,8 +461,9 @@ def _normalize_detailed_explanations(value: Any) -> list[dict[str, Any]]:
             title = f"Detailed Topic {index}"
             bullets = _normalize_note_list(item)
 
-        if bullets:
-            normalized.append({"title": title, "bullets": bullets})
+        blocks = _normalize_note_blocks(item.get("blocks")) if isinstance(item, dict) else []
+        if bullets or blocks:
+            normalized.append({"title": title, "bullets": bullets, "blocks": blocks})
 
     return normalized
 
@@ -545,50 +510,23 @@ def _normalize_structured_note_data(raw_data: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _validate_structured_note_data(note_data: dict[str, Any]) -> list[str]:
-    issues: list[str] = []
-    for key in STRUCTURED_NOTE_SCHEMA_KEYS:
-        value = note_data.get(key)
-        if key == "detailed_explanations":
-            if not value:
-                issues.append("detailed_explanations must contain at least one subtopic with bullets")
-            continue
-        if not value:
-            issues.append(f"{key} must contain at least one bullet")
+def _validate_structured_note_data(note_data: dict[str, Any]) -> dict[str, list[str]]:
+    issues = {}
+    for key in ("topic_overview", "core_concepts", "questions_to_review"):
+        if not any(item.casefold().rstrip(".") != "not mentioned" for item in note_data[key]):
+            issues[key] = ["Provide at least one substantive entry grounded in the lecture."]
 
-    core_concepts = note_data.get("core_concepts") or []
-    if len(core_concepts) < 6:
-        issues.append("core_concepts must contain 6-12 concrete study bullets")
-    if len(core_concepts) > 12:
-        issues.append("core_concepts must contain no more than 12 bullets")
-
-    questions = note_data.get("questions_to_review") or []
-    if len([q for q in questions if q and q != "Not mentioned."]) < 4:
-        issues.append("questions_to_review must contain 4-8 core reconstruction questions")
-    if len(questions) > 8:
-        issues.append("questions_to_review must contain no more than 8 questions")
-
-    detailed = note_data.get("detailed_explanations") or []
-    if detailed and len(detailed) < 2:
-        issues.append("detailed_explanations must contain 2-6 meaningful subtopics")
-    if len(detailed) > 6:
-        issues.append("detailed_explanations must contain no more than 6 subtopics")
+    detailed = note_data["detailed_explanations"]
+    if not detailed:
+        issues["detailed_explanations"] = ["Explain at least one substantive lecture topic."]
     for item in detailed:
-        title = str(item.get("title", "")).strip().lower()
-        if (
-            title.startswith("sub topic")
-            or title.startswith("subtopic")
-            or title in {"detailed explanation", "topic", "main topic"}
-        ):
-            issues.append("detailed_explanations titles must be meaningful, not placeholder subtopic names")
-            break
-        bullets = _normalize_note_list(item.get("bullets"))
-        if len(bullets) < 4:
-            issues.append("each detailed_explanations subtopic must contain 4-8 study bullets")
-            break
-        if len(bullets) > 8:
-            issues.append("each detailed_explanations subtopic must contain no more than 8 bullets")
-            break
+        title = item["title"].casefold()
+        if title.startswith(("sub topic", "subtopic", "detailed topic")) or title in {
+            "detailed explanation", "topic", "main topic",
+        }:
+            issues.setdefault("detailed_explanations", []).append(
+                f"Replace the placeholder title {item['title']!r} with the actual topic."
+            )
     return issues
 
 
@@ -597,7 +535,22 @@ def _ensure_note_items(items: list[str], fallback: str = "Not mentioned.") -> li
 
 
 def _render_bullets(items: list[str]) -> str:
-    return "\n".join(f"- {item}" for item in _ensure_note_items(items))
+    return "\n".join("- " + item.replace("\n", "\n  ") for item in _ensure_note_items(items))
+
+
+def _render_note_block(block: dict[str, str]) -> str:
+    content = block["text"]
+    if block["kind"] == "formula":
+        formula = content.strip()
+        for start, end in (("$$", "$$"), (r"\[", r"\]"), ("$", "$")):
+            if formula.startswith(start) and formula.endswith(end):
+                formula = formula[len(start):-len(end)].strip()
+                break
+        return f"$$\n{formula}\n$$"
+
+    longest_run = max((len(run) for run in re.findall(r"`+", content)), default=0)
+    fence = "`" * max(3, longest_run + 1)
+    return f"{fence}{block.get('language', '')}\n{content}\n{fence}"
 
 
 def _render_structured_notes_markdown(note_data: dict[str, Any]) -> str:
@@ -613,7 +566,11 @@ def _render_structured_notes_markdown(note_data: dict[str, Any]) -> str:
     for item in detailed:
         detail_title = _clean_note_item(item.get("title")) or "Detailed Explanation"
         bullets = _normalize_note_list(item.get("bullets"))
-        detailed_lines.extend(["", f"### {detail_title}", _render_bullets(bullets)])
+        detailed_lines.extend(["", f"### {detail_title}"])
+        if bullets:
+            detailed_lines.append(_render_bullets(bullets))
+        for block in item.get("blocks", []):
+            detailed_lines.extend(["", _render_note_block(block)])
 
     return "\n\n".join(
         [
@@ -626,6 +583,156 @@ def _render_structured_notes_markdown(note_data: dict[str, Any]) -> str:
             "## Exam related mentions\n" + _render_bullets(note_data.get("exam_related_mentions") or []),
         ]
     )
+
+
+class _NoteJSONRequest(Protocol):
+    def __call__(
+        self, *, system_instructions: str, prompt: str, expected_schema: str, stage: str,
+    ) -> dict[str, Any]: ...
+
+
+def _audit_note_content(
+    request: _NoteJSONRequest,
+    note_data: dict[str, Any],
+    evidence: dict[int, str | list[dict[str, str]]],
+) -> tuple[dict[str, list[str]], set[int]]:
+    response = request(
+        stage="note_audit",
+        system_instructions=(
+            "Review the study note against the numbered lecture evidence. "
+            "Report material gaps only: missing cause-and-effect links, prerequisites, steps or results "
+            "that the source supports, worked examples reduced to titles, unsupported claims, "
+            "and review questions the note cannot answer. "
+            "For a question whose answer is supported by the source, flag the missing explanation first. "
+            "If the lecture evidence cannot answer it, flag the question instead. "
+            "Name what to fix, select the affected section key and list the supporting chunk IDs. "
+            "Use an empty chunk_ids array when the issue has no specific source. "
+            "Return an empty issues array for a study note with no material gaps. Return only JSON."
+        ),
+        prompt=(
+            f"Required JSON shape: {NOTE_AUDIT_SCHEMA}\n"
+            f"Study note:\n{json.dumps(note_data, ensure_ascii=False)}\n"
+            f"Numbered lecture evidence:\n{json.dumps(evidence, ensure_ascii=False)}"
+        ),
+        expected_schema=NOTE_AUDIT_SCHEMA,
+    )
+    findings = response.get("issues")
+    if not isinstance(findings, list):
+        raise LLMNoteQualityError("Note quality review did not return an issues array.")
+    issues: dict[str, list[str]] = {}
+    source_ids: set[int] = set()
+    for finding in findings:
+        if not isinstance(finding, dict):
+            raise LLMNoteQualityError("Note quality review returned an invalid issue.")
+        section = finding.get("section")
+        message = _clean_note_item(finding.get("message"))
+        chunk_ids = finding.get("chunk_ids")
+        if section not in (*STRUCTURED_NOTE_SCHEMA_KEYS, "note_title") or not message:
+            raise LLMNoteQualityError("Note quality review did not identify a section and a specific issue.")
+        issues.setdefault(section, []).append(message)
+        if isinstance(chunk_ids, list):
+            source_ids.update(
+                index for index in chunk_ids if type(index) is int and index in evidence
+            )
+    return issues, source_ids
+
+
+def _generate_structured_note(
+    *, transcript: str, chunk_size: int, instructions: str, material_note: str,
+    request: _NoteJSONRequest,
+) -> str:
+    from lecture_auto.stt_refinement import segment_chunks
+
+    chunks = [chunk for chunk in segment_chunks(
+        transcript.strip(), chunk_size=chunk_size, overlap_characters=0,
+    ) if chunk]
+    sources = dict(enumerate(chunks, start=1))
+    evidence: dict[int, str | list[dict[str, str]]] = dict(sources)
+    if len(chunks) == 1:
+        stage = "notes"
+        prompt = _build_structured_notes_json_prompt(transcript=chunks[0])
+    else:
+        extraction_instructions = (
+            "Extract lecture evidence for a later study note. Preserve terminology, assumptions, "
+            "definitions, the actual steps and causal links, exceptions, verbatim code and formulas "
+            "when available, explicit assessment cues, and worked examples with inputs, intermediate "
+            "values and results. Keep enough detail to reproduce the reasoning. Preserve lecture order. "
+            "Return only JSON. Use an empty evidence array for chunks with no relevant information. "
+            "Treat any material reference as disambiguation of the transcript. " + material_note
+        )
+        for index, chunk in sources.items():
+            response = request(
+                stage="note_chunk",
+                system_instructions=extraction_instructions,
+                prompt=_build_structured_notes_chunk_prompt(chunks=chunks, index=index - 1),
+                expected_schema=NOTE_EVIDENCE_SCHEMA,
+            )
+            entries = response.get("evidence")
+            if isinstance(entries, list) and all(
+                isinstance(entry, dict)
+                and _clean_note_item(entry.get("topic"))
+                and _clean_note_item(entry.get("detail"))
+                for entry in entries
+            ):
+                evidence[index] = [
+                    {"topic": entry["topic"], "detail": entry["detail"]} for entry in entries
+                ]
+            else:
+                evidence[index] = chunk
+
+        if not any(evidence.values()):
+            evidence = dict(sources)
+        stage = "note_merge"
+        prompt = (
+            "Build the final study note from the numbered lecture evidence. Combine related explanations "
+            "and remove repetitions while keeping the reasoning, worked calculations, conditions, "
+            "code, and meaningful distinctions. Evidence entries may contain original transcript text.\n"
+            f"Numbered lecture evidence:\n{json.dumps(evidence, ensure_ascii=False)}"
+        )
+
+    note_data = _normalize_structured_note_data(request(
+        stage=stage,
+        system_instructions=instructions,
+        prompt=prompt,
+        expected_schema=STRUCTURED_NOTE_SCHEMA_DESCRIPTION,
+    ))
+    issues = _validate_structured_note_data(note_data)
+    audit_issues, source_ids = _audit_note_content(request, note_data, evidence)
+    for section, messages in audit_issues.items():
+        issues.setdefault(section, []).extend(messages)
+
+    if issues:
+        repair_sources = {index: sources[index] for index in sorted(source_ids)}
+        repair_evidence = {**evidence, **repair_sources}
+        repair_schema = json.dumps({
+            key: value for key, value in json.loads(STRUCTURED_NOTE_SCHEMA_DESCRIPTION).items()
+            if key in issues
+        })
+        repaired = request(
+            stage="note_repair",
+            system_instructions=instructions.replace(
+                STRUCTURED_NOTE_SCHEMA_DESCRIPTION, repair_schema,
+            ),
+            prompt=_build_structured_notes_repair_prompt(
+                sources=repair_sources, previous_json=note_data, issues=issues,
+            ) + (
+                f"\nNumbered lecture evidence:\n{json.dumps(evidence, ensure_ascii=False)}"
+                if not repair_sources or set(issues) - set(audit_issues) else ""
+            ),
+            expected_schema=repair_schema,
+        )
+        if not issues.keys() <= repaired.keys():
+            raise LLMNoteQualityError("Note quality repair omitted a requested section.")
+        note_data = _normalize_structured_note_data(
+            {**note_data, **{key: repaired[key] for key in issues}}
+        )
+        remaining = _validate_structured_note_data(note_data)
+        if not remaining:
+            remaining, _ = _audit_note_content(request, note_data, repair_evidence)
+        if remaining:
+            raise LLMNoteQualityError(f"Note quality issues remain after repair: {', '.join(remaining)}.")
+
+    return _render_structured_notes_markdown(note_data)
 
 
 def _apply_thinking_config(
@@ -654,6 +761,10 @@ class LLMProviderAuthError(Exception):
 
 class LLMTransientNetworkError(Exception):
     """Network connection or timeout error."""
+
+
+class LLMNoteQualityError(Exception):
+    """Note review or repair could not produce an acceptable note."""
 
 
 class LLMProviderAdapter(Protocol):
@@ -737,6 +848,8 @@ class GeminiLLMAdapter:
                     "Gemini add-on is not installed. Open Settings > Add-ons and install Gemini."
                 ) from exc
             if isinstance(exc, LocalRuntimeError):
+                if exc.code == LLMNoteQualityError.__name__:
+                    raise LLMNoteQualityError(str(exc)) from exc
                 raise LLMTransientNetworkError(f"Gemini add-on failed: {exc}") from exc
             raise
 
@@ -896,23 +1009,24 @@ class GeminiLLMAdapter:
                         "Use it to verify terminology, structure, formulas, and examples, while prioritizing the transcript."
                     )
 
-            system_instructions = _build_structured_notes_json_system_instruction(
-                context_topic=context_topic,
-                language=self.config.language,
-                material_note=material_note,
-                template_note=template_note,
-            )
-
-            config_dict: dict = {
-                "system_instruction": system_instructions,
-                "response_mime_type": "application/json",
-            }
+            config_dict: dict = {"response_mime_type": "application/json"}
             _apply_thinking_config(
                 config_dict,
                 types,
                 self.config.model_name,
                 self.config.thinking_level,
             )
+
+            def request_json(
+                *, system_instructions: str, prompt: str, expected_schema: str, stage: str,
+            ) -> dict[str, Any]:
+                response = self.client.models.generate_content(
+                    model=self._normalize_model_name(self.config.model_name),
+                    contents=[prompt],
+                    config={**config_dict, "system_instruction": system_instructions},
+                )
+                _log_llm_usage("gemini", stage, response)
+                return _extract_json_object((getattr(response, "text", "") or "").strip())
 
             try:
                 if uploaded_file:
@@ -930,87 +1044,31 @@ class GeminiLLMAdapter:
                     reference = (getattr(reference_response, "text", "") or "").strip()
                     if not reference:
                         raise ValueError("Lecture material reference extraction returned empty text.")
-                    config_dict["system_instruction"] += (
+                    material_note += (
                         "\nMaterial reference (spelling/context only; not proof of spoken facts):\n"
                         + reference[:8000]
                     )
-                note_chunk_size = self.config.resolve_chunk_size(len(transcript))
-                chunks = _iter_text_chunks(transcript, note_chunk_size)
-                chunk_notes: list[dict[str, Any]] = []
-
-                if len(chunks) > 1:
-                    for index, chunk in enumerate(chunks, start=1):
-                        chunk_contents: list = [
-                            _build_structured_notes_chunk_prompt(
-                                transcript=chunk,
-                                chunk_index=index,
-                                chunk_count=len(chunks),
-                            )
-                        ]
-                        chunk_response = self.client.models.generate_content(
-                            model=self._normalize_model_name(self.config.model_name),
-                            contents=chunk_contents,
-                            config=config_dict,  # type: ignore
-                        )
-                        _log_llm_usage("gemini", "note_chunk", chunk_response)
-                        chunk_text = (getattr(chunk_response, "text", "") or "").strip()
-                        chunk_notes.append(
-                            _normalize_structured_note_data(_extract_json_object(chunk_text))
-                        )
-
-                    merge_contents: list = [
-                        _build_structured_notes_merge_prompt(chunk_notes=chunk_notes)
-                    ]
-                    response = self.client.models.generate_content(
-                        model=self._normalize_model_name(self.config.model_name),
-                        contents=merge_contents,
-                        config=config_dict,  # type: ignore
-                    )
-                else:
-                    contents: list = [_build_structured_notes_json_prompt(transcript=transcript)]
-                    response = self.client.models.generate_content(
-                        model=self._normalize_model_name(self.config.model_name),
-                        contents=contents,
-                        config=config_dict,  # type: ignore
-                    )
-
-                _log_llm_usage("gemini", "note_merge" if chunk_notes else "notes", response)
-                raw_text = (getattr(response, "text", "") or "").strip()
-                note_data = _normalize_structured_note_data(_extract_json_object(raw_text))
-                issues = _validate_structured_note_data(note_data)
-
-                if issues:
-                    repair_evidence = (
-                        json.dumps(chunk_notes, ensure_ascii=False)
-                        if chunk_notes
-                        else transcript
-                    )
-                    repair_contents: list = [
-                        _build_structured_notes_repair_prompt(
-                            transcript=repair_evidence,
-                            previous_json=note_data,
-                            issues=issues,
-                        )
-                    ]
-                    repair_response = self.client.models.generate_content(
-                        model=self._normalize_model_name(self.config.model_name),
-                        contents=repair_contents,
-                        config=config_dict,  # type: ignore
-                    )
-                    _log_llm_usage("gemini", "note_repair", repair_response)
-                    repair_text = (getattr(repair_response, "text", "") or "").strip()
-                    note_data = _normalize_structured_note_data(
-                        _extract_json_object(repair_text)
-                    )
+                return _generate_structured_note(
+                    transcript=transcript,
+                    chunk_size=self.config.resolve_chunk_size(len(transcript)),
+                    instructions=_build_structured_notes_json_system_instruction(
+                        context_topic=context_topic,
+                        language=self.config.language,
+                        material_note=material_note,
+                        template_note=template_note,
+                    ),
+                    material_note=material_note,
+                    request=request_json,
+                )
             finally:
                 if uploaded_file and hasattr(uploaded_file, "name") and uploaded_file.name:
                     try:
                         self.client.files.delete(name=uploaded_file.name)
                     except Exception:
-                        pass # Best effort cleanup
+                        pass  # Best effort cleanup
 
-            return _render_structured_notes_markdown(note_data)
-
+        except LLMNoteQualityError:
+            raise
         except PermissionDenied as exc:
             raise LLMProviderAuthError(f"Gemini authentication failed: {exc}") from exc
         except DeadlineExceeded as exc:
@@ -1200,66 +1258,16 @@ class OllamaLLMAdapter:
         )
 
         try:
-            raw_note_data: dict[str, Any] = {}
-            note_chunk_size = self.config.resolve_chunk_size(len(transcript))
-            chunks = _iter_text_chunks(transcript, note_chunk_size)
-            chunk_notes: list[dict[str, Any]] = []
+            return _generate_structured_note(
+                transcript=transcript,
+                chunk_size=self.config.resolve_chunk_size(len(transcript)),
+                instructions=system_instructions,
+                material_note=material_note,
+                request=self._chat_for_structured_json,
+            )
 
-            if len(chunks) > 1:
-                for index, chunk in enumerate(chunks, start=1):
-                    parsed_chunk = self._chat_for_structured_json(
-                        stage="note_chunk",
-                        system_instructions=system_instructions,
-                        prompt=_build_structured_notes_chunk_prompt(
-                            transcript=chunk,
-                            chunk_index=index,
-                            chunk_count=len(chunks),
-                        ),
-                        expected_schema=STRUCTURED_NOTE_SCHEMA_DESCRIPTION,
-                    )
-                    chunk_notes.append(
-                        _normalize_structured_note_data(parsed_chunk)
-                    )
-
-                raw_note_data = self._chat_for_structured_json(
-                    stage="note_merge",
-                    system_instructions=system_instructions,
-                    prompt=_build_structured_notes_merge_prompt(
-                        chunk_notes=chunk_notes
-                    ),
-                    expected_schema=STRUCTURED_NOTE_SCHEMA_DESCRIPTION,
-                )
-            else:
-                raw_note_data = self._chat_for_structured_json(
-                    system_instructions=system_instructions,
-                    prompt=_build_structured_notes_json_prompt(transcript=transcript),
-                    expected_schema=STRUCTURED_NOTE_SCHEMA_DESCRIPTION,
-                )
-
-            note_data = _normalize_structured_note_data(raw_note_data)
-            issues = _validate_structured_note_data(note_data)
-
-            if issues:
-                repair_evidence = (
-                    json.dumps(chunk_notes, ensure_ascii=False)
-                    if chunk_notes
-                    else transcript
-                )
-                repair_prompt = _build_structured_notes_repair_prompt(
-                    transcript=repair_evidence,
-                    previous_json=note_data,
-                    issues=issues,
-                )
-                repaired_data = self._chat_for_structured_json(
-                    stage="note_repair",
-                    system_instructions=system_instructions,
-                    prompt=repair_prompt,
-                    expected_schema=STRUCTURED_NOTE_SCHEMA_DESCRIPTION,
-                )
-                note_data = _normalize_structured_note_data(repaired_data)
-
-            return _render_structured_notes_markdown(note_data)
-
+        except LLMNoteQualityError:
+            raise
         except Exception as exc:
             error_msg = str(exc).lower()
             if "connection" in error_msg or "refused" in error_msg:

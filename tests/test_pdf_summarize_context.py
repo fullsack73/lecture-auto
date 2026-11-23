@@ -12,6 +12,11 @@ from lecture_auto.session_metadata_store import SessionMetadataStore
 from lecture_auto.session_service import SessionCommandError, SessionService
 
 
+@pytest.fixture(autouse=True)
+def isolate_usage_logging(monkeypatch):
+    monkeypatch.setattr("lecture_auto.llm_adapter._log_llm_usage", lambda *args, **kwargs: None)
+
+
 def _note_payload(
     *,
     detailed_title: str = "Topic A details",
@@ -129,7 +134,9 @@ def test_gemini_adapter_uploads_and_deletes_file() -> None:
         
         mock_response = MagicMock()
         mock_response.text = json.dumps(_note_payload(), ensure_ascii=False)
-        mock_client.models.generate_content.return_value = mock_response
+        mock_client.models.generate_content.side_effect = [
+            MagicMock(text="Supporting reference"), mock_response, MagicMock(text='{"issues": []}'),
+        ]
         
         with patch("os.path.exists", return_value=True):
             res = adapter.generate_notes(
@@ -148,8 +155,8 @@ def test_gemini_adapter_uploads_and_deletes_file() -> None:
         assert isinstance(upload_kwargs["config"], types.UploadFileConfig)
         assert upload_kwargs["config"].mime_type == "application/pdf"
 
-        generate_kwargs = mock_client.models.generate_content.call_args.kwargs
         calls = mock_client.models.generate_content.call_args_list
+        generate_kwargs = calls[1].kwargs
         assert calls[0].kwargs["contents"][-1] is mock_upload
         assert all(mock_upload not in c.kwargs["contents"] for c in calls[1:])
         assert "Material reference" in generate_kwargs["config"]["system_instruction"]
@@ -207,7 +214,9 @@ def test_gemini_adapter_repairs_json_and_renders_structured_markdown() -> None:
         )
         mock_client.models.generate_content.side_effect = [
             first_response,
+            MagicMock(text='{"issues": []}'),
             repair_response,
+            MagicMock(text='{"issues": []}'),
         ]
 
         notes = adapter.generate_notes(
@@ -218,8 +227,8 @@ def test_gemini_adapter_repairs_json_and_renders_structured_markdown() -> None:
 
     assert "### Evidence-based Topic A" in notes
     assert "## Questions to Review" in notes
-    assert mock_client.models.generate_content.call_count == 2
-    repair_prompt = mock_client.models.generate_content.call_args_list[1].kwargs["contents"][0]
+    assert mock_client.models.generate_content.call_count == 4
+    repair_prompt = mock_client.models.generate_content.call_args_list[2].kwargs["contents"][0]
     assert "Repair this JSON" in repair_prompt
     assert "# ignored template" not in repair_prompt
 
@@ -235,8 +244,12 @@ def test_pdf_is_read_once_for_chunk_merge_and_repair():
             prompt = kwargs["contents"][0]
             if prompt.startswith("Extract a compact"):
                 return MagicMock(text=reference)
-            if prompt.startswith("Merge these"):
+            if prompt.startswith("Chunk: "):
+                return MagicMock(text='{"evidence": [{"topic": "Topic A", "detail": "Lecture content."}]}')
+            if prompt.startswith("Build the final study note"):
                 return MagicMock(text=json.dumps(_note_payload(detailed_title="Sub Topic 1")))
+            if "Study note:\n" in prompt:
+                return MagicMock(text='{"issues": []}')
             return MagicMock(text=json.dumps(_note_payload()))
         client.models.generate_content.side_effect = generate
         notes = adapter.generate_notes("lecture content. " * 200, "template", material_path="input.pdf")
@@ -245,11 +258,14 @@ def test_pdf_is_read_once_for_chunk_merge_and_repair():
         assert sum(any(item is uploaded for item in c.kwargs["contents"]) for c in calls) == 1
         for call in calls[1:]:
             system = call.kwargs["config"]["system_instruction"]
+            if "Study note:\n" in call.kwargs["contents"][0]:
+                assert "Material reference" not in system
+                continue
             actual_reference = system.split("not proof of spoken facts):\n", 1)[1]
             assert len(actual_reference) == 8000
             assert "E = mc^2" in actual_reference
             assert "Eigenvalue" in actual_reference
-        assert "Repair this JSON" in calls[-1].kwargs["contents"][0]
+        assert "Repair this JSON" in calls[-2].kwargs["contents"][0]
         assert notes.startswith("# Topic A")
         client.files.delete.assert_called_once_with(name=uploaded.name)
 
