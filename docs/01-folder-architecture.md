@@ -56,7 +56,7 @@ src/lecture_auto/
 ├─ deepgram_adapter.py           # Deepgram adapter
 ├─ whisper_adapter.py            # local Whisper/faster-whisper adapter
 ├─ llm_config.py, llm_adapter.py # LLM 설정, 전사 정제, 노트 생성
-├─ gemini_addon*.py              # Gemini 보조 worker 경로
+├─ gemini_addon*.py              # Gemini·OpenRouter 애드온 worker 경로
 ├─ local_runtime.py              # Ollama/local runtime 관리
 ├─ local_ai_worker.py            # local AI worker 실행
 ├─ local_worker_adapter.py       # local worker adapter

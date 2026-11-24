@@ -1705,7 +1705,7 @@ class SessionService:
             raise SessionCommandError(
                 code="NOTE_QUALITY_FAILED",
                 message=str(exc),
-                guidance="Review the transcript and try generating the note again.",
+                guidance="The model did not complete note generation. Try regenerating the note.",
                 exit_code=1,
             ) from exc
         except LLMConfigError as exc:

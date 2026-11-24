@@ -135,6 +135,7 @@ rm -rf "$BUILD_DIR/app.build" "$BUILD_DIR/app.dist" "$BUILD_DIR/app.app" \
   --nofollow-import-to=onnxruntime \
   --nofollow-import-to=google.genai \
   --nofollow-import-to=google.api_core \
+  --nofollow-import-to=openai \
   --include-data-file="$WORKER=local_ai_worker.py" \
   --include-data-file="$GEMINI_WORKER=gemini_addon_worker.py" \
   --include-data-file="$PACKAGE_INIT=addon_source/lecture_auto/__init__.py" \

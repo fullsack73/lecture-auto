@@ -298,8 +298,10 @@ def config_set(
     stt_quality_retry_context_seconds: float | None = typer.Option(None, "--stt-quality-retry-context-seconds", help="Context padding around suspect windows"),
     stt_quality_retry_max_windows: int | None = typer.Option(None, "--stt-quality-retry-max-windows", help="Maximum selective retry windows"),
     stt_quality_retry_max_seconds: float | None = typer.Option(None, "--stt-quality-retry-max-seconds", help="Maximum total audio seconds retried"),
+    llm_provider: str | None = typer.Option(None, "--llm-provider", help="gemini, openrouter, or ollama"),
+    openrouter_api_key: str | None = typer.Option(None, "--openrouter-api-key", help="OpenRouter API key"),
     gemini_api_key: str | None = typer.Option(None, "--gemini-api-key", help="Google API key for hosted LLMs"),
-    llm_model_name: str | None = typer.Option(None, "--llm-model", help="LLM model name (Gemini or Gemma 4 hosted model ID)"),
+    llm_model_name: str | None = typer.Option(None, "--llm-model", help="Model ID for the selected LLM provider"),
     llm_thinking_level: str | None = typer.Option(None, "--llm-thinking-level", help="LLM thinking level (minimal, low, medium, high)"),
     audio_format: str | None = typer.Option(None, "--audio-format", help="Default audio format for recordings (wav or mp3)"),
     capture_source: str | None = typer.Option(None, "--capture-source", help="Capture source (microphone or system_audio)"),
@@ -501,6 +503,23 @@ def config_set(
             typer.echo(str(exc), err=True)
             raise typer.Exit(code=1) from exc
 
+    if llm_provider is not None:
+        llm_provider = llm_provider.strip().lower()
+        if llm_provider not in {"gemini", "openrouter", "ollama"}:
+            raise typer.BadParameter("LLM provider must be gemini, openrouter, or ollama", param_hint="--llm-provider")
+        if llm_provider != config_data.get("llm_provider", "gemini"):
+            config_data.pop("llm_model_name", None)
+        config_data["llm_provider"] = llm_provider
+        updated = True
+
+    if openrouter_api_key is not None:
+        from lecture_auto.application import ConfigRepository
+
+        ConfigRepository().set_secret("openrouter_api_key", openrouter_api_key)
+        config_data.pop("openrouter_api_key", None)
+        typer.echo("Global OpenRouter API key configured.")
+        updated = True
+
     if gemini_api_key is not None:
         from lecture_auto.application import ConfigRepository
         ConfigRepository().set_secret("gemini_api_key", gemini_api_key)
@@ -509,14 +528,19 @@ def config_set(
         updated = True
 
     if llm_model_name is not None:
-        normalized_model = normalize_gemini_model_name(llm_model_name)
+        provider = os.environ.get("LLM_PROVIDER") or config_data.get("llm_provider", "gemini")
+        normalized_model = llm_model_name.strip()
+        if provider not in {"openrouter", "ollama"}:
+            normalized_model = normalize_gemini_model_name(normalized_model)
         valid_models = set(GEMINI_MODEL_CHOICES)
-        if normalized_model not in valid_models:
+        if provider not in {"openrouter", "ollama"} and normalized_model not in valid_models:
             typer.echo(
                 f"LLM model must be one of {valid_models}.",
                 err=True,
             )
             raise typer.Exit(code=1)
+        if not normalized_model:
+            raise typer.BadParameter("LLM model cannot be empty", param_hint="--llm-model")
         config_data["llm_model_name"] = normalized_model
         typer.echo(f"Global LLM model set to: {config_data['llm_model_name']}")
         updated = True
@@ -686,6 +710,7 @@ def runtime_status(
     typer.echo(f"Whisper: {'installed' if status['whisper_installed'] else 'not installed'}")
     typer.echo(f"DeepFilterNet: {'installed' if status['deepfilter_installed'] else 'not installed'}")
     typer.echo(f"Gemini add-on: {'installed' if status['gemini_installed'] else 'not installed'}")
+    typer.echo(f"OpenRouter add-on: {'installed' if status['openrouter_installed'] else 'not installed'}")
     typer.echo(f"LibreOffice: {status['libreoffice_path'] or 'not installed'}")
     if status.get("error"):
         typer.echo(f"Error: {status['error']}")
@@ -693,13 +718,13 @@ def runtime_status(
 
 @runtime_app.command("install")
 def runtime_install(
-    feature: str = typer.Option("all", "--feature", help="whisper, deepfilter, gemini, libreoffice, or all (AI features)"),
+    feature: str = typer.Option("all", "--feature", help="whisper, deepfilter, gemini, openrouter, libreoffice, or all (AI features)"),
 ) -> None:
     from lecture_auto.local_runtime import LocalRuntimeManager
 
     normalized = feature.strip().lower()
-    if normalized not in {"whisper", "deepfilter", "gemini", "libreoffice", "all"}:
-        raise typer.BadParameter("feature must be whisper, deepfilter, gemini, libreoffice, or all")
+    if normalized not in {"whisper", "deepfilter", "gemini", "openrouter", "libreoffice", "all"}:
+        raise typer.BadParameter("feature must be whisper, deepfilter, gemini, openrouter, libreoffice, or all")
     manager = LocalRuntimeManager()
 
     def progress(stage, completed, total, message) -> None:
@@ -717,6 +742,8 @@ def runtime_install(
         status = manager.install_deepfilter(progress=progress)
     elif normalized == "gemini":
         status = manager.install_gemini(progress=progress)
+    elif normalized == "openrouter":
+        status = manager.install_openrouter(progress=progress)
     else:
         status = manager.install_all(progress=progress)
     typer.echo(f"Runtime ready: {status.python_path}")

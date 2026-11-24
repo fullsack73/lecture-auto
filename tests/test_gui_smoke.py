@@ -346,7 +346,7 @@ def test_settings_groups_runtime_and_model_actions(tmp_path: Path, qtbot) -> Non
     button_labels = {button.text() for button in page.findChildren(QPushButton)}
 
     assert len(panels) == 2
-    assert page.runtime_feature.count() == 5
+    assert page.runtime_feature.count() == 6
     assert {
         "선택 항목 설치",
         "상태 다시 확인",
@@ -654,6 +654,7 @@ def test_local_ai_section_shows_uninstalled_features(tmp_path: Path, qtbot) -> N
     assert window.settings_page.runtime_whisper_status.text() == "설치되지 않음"
     assert window.settings_page.runtime_deepfilter_status.text() == "설치되지 않음"
     assert window.settings_page.runtime_gemini_status.text() == "설치되지 않음"
+    assert window.settings_page.runtime_openrouter_status.text() == "설치되지 않음"
     labels = {button.text() for button in window.settings_page.findChildren(QPushButton)}
     assert {
         "선택 항목 설치",
@@ -664,7 +665,7 @@ def test_local_ai_section_shows_uninstalled_features(tmp_path: Path, qtbot) -> N
     assert [
         window.settings_page.runtime_feature.itemData(index)
         for index in range(window.settings_page.runtime_feature.count())
-    ] == ["whisper", "deepfilter", "gemini", "libreoffice", "all"]
+    ] == ["whisper", "deepfilter", "gemini", "openrouter", "libreoffice", "all"]
 
 
 def test_compiled_macos_version_uses_explicit_build_label(tmp_path, monkeypatch):

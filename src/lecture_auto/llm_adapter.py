@@ -15,6 +15,23 @@ from lecture_auto.llm_config import LLMConfig, normalize_gemini_model_name
 logger = logging.getLogger(__name__)
 
 
+_MATERIAL_REFERENCE_LIMIT = 8000
+_MATERIAL_REFERENCE_PROMPT = (
+    "Extract a compact lecture-material reference. Preserve technical terms, exact formulas, "
+    "structure and named examples. Do not invent facts. Return plain text only."
+)
+
+
+def _material_reference_note(reference: str) -> str:
+    reference = reference.strip()
+    if not reference:
+        raise LLMConfigError("No usable lecture material reference could be extracted from the PDF.")
+    return (
+        "\nMaterial reference (spelling/context only; not proof of spoken facts):\n"
+        + reference[:_MATERIAL_REFERENCE_LIMIT]
+    )
+
+
 def _log_llm_usage(
     provider: str, stage: str, response: Any, *, input_characters: dict[str, int] | None = None,
 ) -> None:
@@ -585,6 +602,10 @@ def _render_structured_notes_markdown(note_data: dict[str, Any]) -> str:
     )
 
 
+class _NoteTextRequest(Protocol):
+    def __call__(self, *, system_instructions: str, prompt: str, stage: str) -> str: ...
+
+
 class _NoteJSONRequest(Protocol):
     def __call__(
         self, *, system_instructions: str, prompt: str, expected_schema: str, stage: str,
@@ -596,39 +617,49 @@ def _audit_note_content(
     note_data: dict[str, Any],
     evidence: dict[int, str | list[dict[str, str]]],
 ) -> tuple[dict[str, list[str]], set[int]]:
-    response = request(
-        stage="note_audit",
-        system_instructions=(
-            "Review the study note against the numbered lecture evidence. "
-            "Report material gaps only: missing cause-and-effect links, prerequisites, steps or results "
-            "that the source supports, worked examples reduced to titles, unsupported claims, "
-            "and review questions the note cannot answer. "
-            "For a question whose answer is supported by the source, flag the missing explanation first. "
-            "If the lecture evidence cannot answer it, flag the question instead. "
-            "Name what to fix, select the affected section key and list the supporting chunk IDs. "
-            "Use an empty chunk_ids array when the issue has no specific source. "
-            "Return an empty issues array for a study note with no material gaps. Return only JSON."
-        ),
-        prompt=(
-            f"Required JSON shape: {NOTE_AUDIT_SCHEMA}\n"
-            f"Study note:\n{json.dumps(note_data, ensure_ascii=False)}\n"
-            f"Numbered lecture evidence:\n{json.dumps(evidence, ensure_ascii=False)}"
-        ),
-        expected_schema=NOTE_AUDIT_SCHEMA,
-    )
+    try:
+        response = request(
+            stage="note_audit",
+            system_instructions=(
+                "Review the study note against the numbered lecture evidence. "
+                "Report material gaps only: missing cause-and-effect links, prerequisites, steps or results "
+                "that the source supports, worked examples reduced to titles, unsupported claims, "
+                "and review questions the note cannot answer. "
+                "For a question whose answer is supported by the source, flag the missing explanation first. "
+                "If the lecture evidence cannot answer it, flag the question instead. "
+                "Worked solutions belong in detailed_explanations. examples_mentioned can be a brief index, "
+                "and questions_to_review need no answers if the explanation is already in the body. "
+                "Do not require examples, conditions, or steps absent from the evidence. "
+                "Name what to fix, select the affected section key and list the supporting chunk IDs. "
+                "Use an empty chunk_ids array when the issue has no specific source. "
+                "Return an empty issues array for a study note with no material gaps. Return only JSON."
+            ),
+            prompt=(
+                f"Required JSON shape: {NOTE_AUDIT_SCHEMA}\n"
+                f"Study note:\n{json.dumps(note_data, ensure_ascii=False)}\n"
+                f"Numbered lecture evidence:\n{json.dumps(evidence, ensure_ascii=False)}"
+            ),
+            expected_schema=NOTE_AUDIT_SCHEMA,
+        )
+    except LLMNoteQualityError:
+        logger.warning("Skipping note review because its response could not be parsed.")
+        return {}, set()
     findings = response.get("issues")
     if not isinstance(findings, list):
-        raise LLMNoteQualityError("Note quality review did not return an issues array.")
+        logger.warning("Skipping note review because its issues array is missing.")
+        return {}, set()
     issues: dict[str, list[str]] = {}
     source_ids: set[int] = set()
     for finding in findings:
         if not isinstance(finding, dict):
-            raise LLMNoteQualityError("Note quality review returned an invalid issue.")
+            logger.warning("Ignoring a malformed note review finding.")
+            continue
         section = finding.get("section")
         message = _clean_note_item(finding.get("message"))
         chunk_ids = finding.get("chunk_ids")
         if section not in (*STRUCTURED_NOTE_SCHEMA_KEYS, "note_title") or not message:
-            raise LLMNoteQualityError("Note quality review did not identify a section and a specific issue.")
+            logger.warning("Ignoring a note review finding without a recognized section or message.")
+            continue
         issues.setdefault(section, []).append(message)
         if isinstance(chunk_ids, list):
             source_ids.update(
@@ -639,9 +670,30 @@ def _audit_note_content(
 
 def _generate_structured_note(
     *, transcript: str, chunk_size: int, instructions: str, material_note: str,
-    request: _NoteJSONRequest,
+    request_text: _NoteTextRequest,
 ) -> str:
     from lecture_auto.stt_refinement import segment_chunks
+
+    def request(
+        *, system_instructions: str, prompt: str, expected_schema: str, stage: str,
+    ) -> dict[str, Any]:
+        raw_text = request_text(system_instructions=system_instructions, prompt=prompt, stage=stage)
+        try:
+            return _extract_json_object(raw_text)
+        except ValueError as parse_error:
+            retry_prompt = prompt
+            if raw_text.strip():
+                retry_prompt = _build_json_syntax_repair_prompt(
+                    invalid_json=raw_text, expected_schema=expected_schema, parser_error=str(parse_error),
+                )
+
+        repaired_text = request_text(
+            system_instructions=system_instructions, prompt=retry_prompt, stage="syntax_repair",
+        )
+        try:
+            return _extract_json_object(repaired_text)
+        except ValueError as repair_error:
+            raise LLMNoteQualityError("The model did not return valid note data.") from repair_error
 
     chunks = [chunk for chunk in segment_chunks(
         transcript.strip(), chunk_size=chunk_size, overlap_characters=0,
@@ -661,12 +713,16 @@ def _generate_structured_note(
             "Treat any material reference as disambiguation of the transcript. " + material_note
         )
         for index, chunk in sources.items():
-            response = request(
-                stage="note_chunk",
-                system_instructions=extraction_instructions,
-                prompt=_build_structured_notes_chunk_prompt(chunks=chunks, index=index - 1),
-                expected_schema=NOTE_EVIDENCE_SCHEMA,
-            )
+            try:
+                response = request(
+                    stage="note_chunk",
+                    system_instructions=extraction_instructions,
+                    prompt=_build_structured_notes_chunk_prompt(chunks=chunks, index=index - 1),
+                    expected_schema=NOTE_EVIDENCE_SCHEMA,
+                )
+            except LLMNoteQualityError:
+                logger.warning("Using original transcript for note chunk %d after invalid JSON.", index)
+                continue
             entries = response.get("evidence")
             if isinstance(entries, list) and all(
                 isinstance(entry, dict)
@@ -708,29 +764,50 @@ def _generate_structured_note(
             key: value for key, value in json.loads(STRUCTURED_NOTE_SCHEMA_DESCRIPTION).items()
             if key in issues
         })
-        repaired = request(
-            stage="note_repair",
-            system_instructions=instructions.replace(
-                STRUCTURED_NOTE_SCHEMA_DESCRIPTION, repair_schema,
-            ),
-            prompt=_build_structured_notes_repair_prompt(
-                sources=repair_sources, previous_json=note_data, issues=issues,
-            ) + (
-                f"\nNumbered lecture evidence:\n{json.dumps(evidence, ensure_ascii=False)}"
-                if not repair_sources or set(issues) - set(audit_issues) else ""
-            ),
-            expected_schema=repair_schema,
+        try:
+            repaired = request(
+                stage="note_repair",
+                system_instructions=instructions.replace(
+                    STRUCTURED_NOTE_SCHEMA_DESCRIPTION, repair_schema,
+                ),
+                prompt=_build_structured_notes_repair_prompt(
+                    sources=repair_sources, previous_json=note_data, issues=issues,
+                ) + (
+                    f"\nNumbered lecture evidence:\n{json.dumps(evidence, ensure_ascii=False)}"
+                    if not repair_sources or set(issues) - set(audit_issues) else ""
+                ),
+                expected_schema=repair_schema,
+            )
+        except LLMNoteQualityError:
+            logger.warning("Skipping note repair because its response could not be parsed.")
+            repaired = {}
+
+        candidate = _normalize_structured_note_data(
+            {**note_data, **{key: repaired[key] for key in issues.keys() & repaired.keys()}}
         )
-        if not issues.keys() <= repaired.keys():
-            raise LLMNoteQualityError("Note quality repair omitted a requested section.")
-        note_data = _normalize_structured_note_data(
-            {**note_data, **{key: repaired[key] for key in issues}}
-        )
-        remaining = _validate_structured_note_data(note_data)
-        if not remaining:
+        applied_repair = False
+        for section in issues.keys() & repaired.keys():
+            value = candidate[section]
+            if value and (
+                section in {"note_title", "detailed_explanations"}
+                or any(item.casefold().rstrip(".") != "not mentioned" for item in value)
+            ):
+                note_data[section] = value
+                applied_repair = True
+        if applied_repair:
             remaining, _ = _audit_note_content(request, note_data, repair_evidence)
-        if remaining:
-            raise LLMNoteQualityError(f"Note quality issues remain after repair: {', '.join(remaining)}.")
+            if remaining:
+                logger.warning("Note review findings remain after repair in sections: %s.", ", ".join(remaining))
+
+    if not (
+        note_data["detailed_explanations"]
+        or any(
+            item.casefold().rstrip(".") != "not mentioned"
+            for key in ("topic_overview", "core_concepts", "examples_mentioned", "questions_to_review", "exam_related_mentions")
+            for item in note_data[key]
+        )
+    ):
+        raise LLMNoteQualityError("The model returned no note content.")
 
     return _render_structured_notes_markdown(note_data)
 
@@ -1017,16 +1094,14 @@ class GeminiLLMAdapter:
                 self.config.thinking_level,
             )
 
-            def request_json(
-                *, system_instructions: str, prompt: str, expected_schema: str, stage: str,
-            ) -> dict[str, Any]:
+            def request_text(*, system_instructions: str, prompt: str, stage: str) -> str:
                 response = self.client.models.generate_content(
                     model=self._normalize_model_name(self.config.model_name),
                     contents=[prompt],
                     config={**config_dict, "system_instruction": system_instructions},
                 )
                 _log_llm_usage("gemini", stage, response)
-                return _extract_json_object((getattr(response, "text", "") or "").strip())
+                return getattr(response, "text", "") or ""
 
             try:
                 if uploaded_file:
@@ -1044,10 +1119,7 @@ class GeminiLLMAdapter:
                     reference = (getattr(reference_response, "text", "") or "").strip()
                     if not reference:
                         raise ValueError("Lecture material reference extraction returned empty text.")
-                    material_note += (
-                        "\nMaterial reference (spelling/context only; not proof of spoken facts):\n"
-                        + reference[:8000]
-                    )
+                    material_note += _material_reference_note(reference)
                 return _generate_structured_note(
                     transcript=transcript,
                     chunk_size=self.config.resolve_chunk_size(len(transcript)),
@@ -1058,7 +1130,7 @@ class GeminiLLMAdapter:
                         template_note=template_note,
                     ),
                     material_note=material_note,
-                    request=request_json,
+                    request_text=request_text,
                 )
             finally:
                 if uploaded_file and hasattr(uploaded_file, "name") and uploaded_file.name:
@@ -1095,21 +1167,15 @@ class GeminiLLMAdapter:
             raise LLMTransientNetworkError(f"Gemini LLM request failed: {exc}") from exc
 
 
-class OllamaLLMAdapter:
-    """Implementation of Ollama API for transcript refinement using local models."""
+class _ChatLLMAdapter:
+    label: str
+    config: LLMConfig
 
-    def __init__(self, config: LLMConfig) -> None:
-        self.config = config
-        
-        # Check if ollama package is available
-        try:
-            import ollama
-            client_type = getattr(ollama, "Client", None)
-            self.ollama = client_type(host=config.ollama_base_url) if client_type else ollama
-        except ImportError as exc:
-            raise LLMConfigError(
-                "ollama package is not installed. Run: pip install ollama"
-            ) from exc
+    def _chat(self, **kwargs: Any) -> dict[str, Any]:
+        raise NotImplementedError
+
+    def _read_pdf_reference(self, path: Path) -> str:
+        raise NotImplementedError
 
     def refine_transcript(
         self,
@@ -1118,7 +1184,7 @@ class OllamaLLMAdapter:
         evidence: dict[str, object] | None = None,
         checkpoint_path: str | None = None,
     ) -> str:
-        """Refines the transcript in chunks using the Ollama model."""
+        """Refines the transcript in chunks using the configured chat model."""
         if not raw_text or not raw_text.strip():
             return raw_text
 
@@ -1152,50 +1218,28 @@ class OllamaLLMAdapter:
                     evidence=chunk_evidence,
                 )
 
-                try:
-                    response = self.ollama.chat(
-                        model=self.config.model_name,
-                        messages=[
-                            {"role": "system", "content": system_instructions},
-                            {"role": "user", "content": prompt}
-                        ]
-                    )
-                    _log_llm_usage("ollama", "refine", response, input_characters={
-                        "transcript": len(chunk), "context": len(prompt) - len(chunk),
-                        "system": len(system_instructions),
-                    })
-                    text = response.get("message", {}).get("content", "").strip()
-                    checkpoint.append(text)
-                except Exception as exc:
-                    error_msg = str(exc).lower()
-                    if "connection" in error_msg or "refused" in error_msg:
-                        raise LLMTransientNetworkError(
-                            f"Cannot connect to Ollama server at {self.config.ollama_base_url}. "
-                            f"Make sure Ollama is running: {exc}"
-                        ) from exc
-                    if "not found" in error_msg or "model" in error_msg:
-                        raise LLMConfigError(
-                            f"Model '{self.config.model_name}' not found. "
-                            f"Available models: {self._get_available_models()}"
-                        ) from exc
-                    raise LLMTransientNetworkError(f"Ollama request failed: {exc}") from exc
-                
+                response = self._chat(
+                    model=self.config.model_name,
+                    messages=[
+                        {"role": "system", "content": system_instructions},
+                        {"role": "user", "content": prompt}
+                    ]
+                )
+                _log_llm_usage(self.config.provider, "refine", response, input_characters={
+                    "transcript": len(chunk), "context": len(prompt) - len(chunk),
+                    "system": len(system_instructions),
+                })
+                text = response.get("message", {}).get("content", "").strip()
+                checkpoint.append(text)
             return "\n".join(checkpoint.completed)
 
         except (LLMConfigError, LLMProviderAuthError, LLMTransientNetworkError):
             raise
         except Exception as exc:
-            raise LLMTransientNetworkError(f"Ollama LLM request failed: {exc}") from exc
+            raise LLMTransientNetworkError(f"{self.label} LLM request failed: {exc}") from exc
 
-    def _chat_for_structured_json(
-        self,
-        *,
-        system_instructions: str,
-        prompt: str,
-        expected_schema: str,
-        stage: str = "notes",
-    ) -> dict[str, Any]:
-        response = self.ollama.chat(
+    def _request_note_text(self, *, system_instructions: str, prompt: str, stage: str) -> str:
+        response = self._chat(
             model=self.config.model_name,
             messages=[
                 {"role": "system", "content": system_instructions},
@@ -1203,38 +1247,8 @@ class OllamaLLMAdapter:
             ],
             format="json",
         )
-        _log_llm_usage("ollama", stage, response)
-        raw_text = response.get("message", {}).get("content", "").strip()
-
-        try:
-            return _extract_json_object(raw_text)
-        except (TypeError, ValueError) as parse_error:
-            repair_response = self.ollama.chat(
-                model=self.config.model_name,
-                messages=[
-                    {"role": "system", "content": system_instructions},
-                    {
-                        "role": "user",
-                        "content": _build_json_syntax_repair_prompt(
-                            invalid_json=raw_text,
-                            expected_schema=expected_schema,
-                            parser_error=str(parse_error),
-                        ),
-                    },
-                ],
-                format="json",
-            )
-            _log_llm_usage("ollama", "syntax_repair", repair_response)
-            repaired_text = (
-                repair_response.get("message", {}).get("content", "").strip()
-            )
-            try:
-                return _extract_json_object(repaired_text)
-            except (TypeError, ValueError) as repair_error:
-                raise ValueError(
-                    "Ollama returned invalid JSON after one syntax repair attempt: "
-                    f"{repair_error}"
-                ) from repair_error
+        _log_llm_usage(self.config.provider, stage, response)
+        return response.get("message", {}).get("content", "") or ""
 
     def generate_notes(
         self,
@@ -1247,40 +1261,117 @@ class OllamaLLMAdapter:
         if not transcript or not transcript.strip():
             return transcript
 
-        material_note = " (Note: PDF material attachment is not supported for Ollama.)" if material_path else ""
-        template_note = _build_template_note(template)
-
-        system_instructions = _build_structured_notes_json_system_instruction(
-            context_topic=context_topic,
-            language=self.config.language,
-            material_note=material_note,
-            template_note=template_note,
-        )
-
         try:
+            material_note = ""
+            if material_path:
+                material_note = _material_reference_note(self._read_pdf_reference(Path(material_path)))
+            system_instructions = _build_structured_notes_json_system_instruction(
+                context_topic=context_topic,
+                language=self.config.language,
+                material_note=material_note,
+                template_note=_build_template_note(template),
+            )
             return _generate_structured_note(
                 transcript=transcript,
                 chunk_size=self.config.resolve_chunk_size(len(transcript)),
                 instructions=system_instructions,
                 material_note=material_note,
-                request=self._chat_for_structured_json,
+                request_text=self._request_note_text,
             )
 
-        except LLMNoteQualityError:
+        except (LLMConfigError, LLMProviderAuthError, LLMTransientNetworkError, LLMNoteQualityError):
             raise
         except Exception as exc:
-            error_msg = str(exc).lower()
-            if "connection" in error_msg or "refused" in error_msg:
+            raise LLMTransientNetworkError(f"{self.label} note generation failed: {exc}") from exc
+
+
+class OllamaLLMAdapter(_ChatLLMAdapter):
+    """Ollama chat transport."""
+
+    label = "Ollama"
+
+    def __init__(self, config: LLMConfig) -> None:
+        self.config = config
+
+        # Check if ollama package is available
+        try:
+            import ollama
+            client_type = getattr(ollama, "Client", None)
+            self.ollama = client_type(host=config.ollama_base_url) if client_type else ollama
+        except ImportError as exc:
+            raise LLMConfigError(
+                "ollama package is not installed. Run: pip install ollama"
+            ) from exc
+
+    def _chat(self, **kwargs: Any) -> dict[str, Any]:
+        try:
+            return self.ollama.chat(**kwargs)
+        except Exception as exc:
+            message = str(exc).lower()
+            if "connection" in message or "refused" in message:
                 raise LLMTransientNetworkError(
                     f"Cannot connect to Ollama server at {self.config.ollama_base_url}. "
                     f"Make sure Ollama is running: {exc}"
                 ) from exc
-            if "not found" in error_msg or "model" in error_msg:
+            if "not found" in message or "model" in message:
                 raise LLMConfigError(
                     f"Model '{self.config.model_name}' not found. "
                     f"Available models: {self._get_available_models()}"
                 ) from exc
-            raise LLMTransientNetworkError(f"Ollama note generation harness failed: {exc}") from exc
+            raise LLMTransientNetworkError(f"Ollama request failed: {exc}") from exc
+
+    def _read_pdf_reference(self, path: Path) -> str:
+        try:
+            capabilities = self.ollama.show(self.config.model_name).get("capabilities") or []
+        except Exception as exc:
+            raise LLMConfigError(
+                "Could not check whether the selected Ollama model supports images."
+            ) from exc
+        if "vision" not in capabilities:
+            from pypdf import PdfReader
+            from pypdf.errors import PdfReadError
+
+            try:
+                with path.open("rb") as pdf:
+                    reference = "\n".join(page.extract_text() or "" for page in PdfReader(pdf).pages)
+            except (OSError, ValueError, PdfReadError) as exc:
+                raise LLMConfigError("Could not read the attached PDF.") from exc
+            if not reference.strip():
+                raise LLMConfigError("This PDF has no extractable text. Select an Ollama model with vision support.")
+            return reference
+
+        from PySide6.QtCore import QBuffer, QIODevice, Qt
+        from PySide6.QtPdf import QPdfDocument
+
+        document = QPdfDocument()
+        if document.load(str(path)) != QPdfDocument.Error.None_:
+            raise LLMConfigError("Could not open the attached PDF for rendering.")
+        pages: list[str] = []
+        budget = max(1, _MATERIAL_REFERENCE_LIMIT // max(1, document.pageCount()))
+        try:
+            for index in range(document.pageCount()):
+                size = document.pagePointSize(index).toSize()
+                size.scale(1600, 1600, Qt.AspectRatioMode.KeepAspectRatio)
+                image = document.render(index, size)
+                buffer = QBuffer()
+                if image.isNull() or not buffer.open(QIODevice.OpenModeFlag.WriteOnly) or not image.save(buffer, "PNG"):
+                    raise LLMConfigError(f"Could not render PDF page {index + 1}.")
+                response = self._chat(
+                    model=self.config.model_name,
+                    messages=[{
+                        "role": "user",
+                        "content": f"{_MATERIAL_REFERENCE_PROMPT} Use at most {budget} characters.",
+                        "images": [bytes(buffer.data())],
+                    }],
+                )
+                _log_llm_usage("ollama", "material_reference", response)
+                text = (response.get("message", {}).get("content") or "").strip()
+                if not text:
+                    raise LLMConfigError(f"Ollama returned no reference for PDF page {index + 1}.")
+                pages.append(text[:budget])
+        finally:
+            document.close()
+        return "\n".join(pages)
 
     def _get_available_models(self) -> str:
         """Helper to list available Ollama models for error messages."""
@@ -1290,3 +1381,76 @@ class OllamaLLMAdapter:
             return ", ".join(model_names) if model_names else "none"
         except Exception:
             return "unknown"
+
+
+class OpenRouterLLMAdapter(_ChatLLMAdapter):
+    """OpenRouter chat transport loaded only in the managed add-on worker."""
+
+    label = "OpenRouter"
+
+    def __init__(self, config: LLMConfig) -> None:
+        import openai
+
+        self.config = config
+        try:
+            config.validate()
+        except ValueError as exc:
+            raise LLMConfigError(str(exc)) from exc
+        self._sdk = openai
+        self._client = openai.OpenAI(
+            api_key=config.api_key,
+            base_url="https://openrouter.ai/api/v1",
+            timeout=180.0,
+            max_retries=0,
+        )
+
+    def _read_pdf_reference(self, path: Path) -> str:
+        from base64 import b64encode
+
+        try:
+            encoded = b64encode(path.read_bytes()).decode("ascii")
+        except OSError as exc:
+            raise LLMConfigError("Could not read the attached PDF.") from exc
+        response = self._chat(
+            model=self.config.model_name,
+            messages=[{
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": f"{_MATERIAL_REFERENCE_PROMPT} Use at most {_MATERIAL_REFERENCE_LIMIT} characters."},
+                    {"type": "file", "file": {"filename": path.name, "file_data": f"data:application/pdf;base64,{encoded}"}},
+                ],
+            }],
+        )
+        _log_llm_usage("openrouter", "material_reference", response)
+        return response["message"]["content"]
+
+    def _chat(self, *, model: str, messages: list[dict[str, Any]], format: str | None = None) -> dict[str, Any]:
+        options = {"response_format": {"type": "json_object"}} if format == "json" else {}
+        try:
+            response = self._client.chat.completions.create(
+                model=model,
+                messages=messages,
+                extra_body={"provider": {"require_parameters": True}} if options else None,
+                **options,
+            )
+        except self._sdk.APIStatusError as exc:
+            status = exc.status_code
+            if status in {401, 403}:
+                raise LLMProviderAuthError(f"OpenRouter rejected the API credentials (HTTP {status}).") from None
+            if status in {400, 402, 404, 422}:
+                raise LLMConfigError(
+                    f"OpenRouter rejected the request (HTTP {status}). Check model ID, JSON mode support, or credits."
+                ) from None
+            raise LLMTransientNetworkError(f"OpenRouter request failed (HTTP {status}).") from None
+        except self._sdk.APIConnectionError:
+            raise LLMTransientNetworkError("Could not connect to OpenRouter.") from None
+
+        content = response.choices[0].message.content if response.choices else None
+        if not content and format != "json":
+            raise LLMTransientNetworkError("OpenRouter returned no text.")
+        usage = response.usage
+        return {
+            "message": {"content": content or ""},
+            "prompt_eval_count": usage.prompt_tokens if usage else None,
+            "eval_count": usage.completion_tokens if usage else None,
+        }

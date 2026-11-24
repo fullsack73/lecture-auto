@@ -96,6 +96,7 @@ def build(platform_name: str | None = None, *, smoke_test: bool = True) -> Path:
         "--nofollow-import-to=onnxruntime",
         "--nofollow-import-to=google.genai",
         "--nofollow-import-to=google.api_core",
+        "--nofollow-import-to=openai",
         f"--include-data-dir={ffmpeg_root / 'licenses'}=licenses/ffmpeg",
         f"--report={report}",
         "--assume-yes-for-downloads",

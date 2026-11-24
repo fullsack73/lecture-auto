@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
-from lecture_auto.llm_config import DEFAULT_GEMINI_MODEL, LLMConfig, normalize_gemini_model_name
+from lecture_auto.llm_config import DEFAULT_GEMINI_MODEL, DEFAULT_OPENROUTER_MODEL, LLMConfig, normalize_gemini_model_name
 from lecture_auto.stt_config import STTConfig
 
 if TYPE_CHECKING:
@@ -18,7 +18,8 @@ if TYPE_CHECKING:
 
 
 SECRET_SERVICE = "lecture-auto"
-SECRET_FIELDS = ("stt_api_key", "gemini_api_key")
+LLM_SECRET_FIELDS = {"gemini": "gemini_api_key", "openrouter": "openrouter_api_key"}
+SECRET_FIELDS = ("stt_api_key", *LLM_SECRET_FIELDS.values())
 WORKSPACE_DIRECTORIES = ("metadata", "recordings", "transcripts", "notes", "materials")
 
 
@@ -202,16 +203,20 @@ class ConfigRepository:
             provider = "gemini"
         if provider == "local":
             provider = "ollama"
-        gemini_api_key = os.environ.get("GEMINI_API_KEY")
-        if load_secrets and not gemini_api_key and provider == "gemini":
-            gemini_api_key = self.get_secret("gemini_api_key")
-        default_model = "gemma4:31b-cloud" if provider == "ollama" else DEFAULT_GEMINI_MODEL
+        secret_field = LLM_SECRET_FIELDS.get(provider)
+        api_key = os.environ.get(secret_field.upper()) if secret_field else None
+        if load_secrets and secret_field and not api_key:
+            api_key = self.get_secret(secret_field)
+        default_model = {
+            "ollama": "gemma4:31b-cloud",
+            "openrouter": DEFAULT_OPENROUTER_MODEL,
+        }.get(provider, DEFAULT_GEMINI_MODEL)
         model_name = os.environ.get("LLM_MODEL") or data.get("llm_model_name") or default_model
         if provider == "gemini":
             model_name = normalize_gemini_model_name(str(model_name))
         llm = LLMConfig(
             provider=provider,
-            api_key=gemini_api_key,
+            api_key=api_key,
             model_name=str(model_name),
             thinking_level=str(os.environ.get("LLM_THINKING_LEVEL") or data.get("llm_thinking_level") or "medium"),
             language=data.get("llm_language"),
@@ -279,8 +284,9 @@ class ConfigRepository:
         temp.replace(self.path)
         if config.stt.api_key:
             self.set_secret("stt_api_key", config.stt.api_key)
-        if config.llm.api_key:
-            self.set_secret("gemini_api_key", config.llm.api_key)
+        secret_field = LLM_SECRET_FIELDS.get(config.llm.provider)
+        if secret_field and config.llm.api_key:
+            self.set_secret(secret_field, config.llm.api_key)
 
     def get_secret(self, name: str) -> str | None:
         if name not in SECRET_FIELDS:
@@ -398,6 +404,10 @@ def build_service_container(
             llm_adapter = gemini_adapter_cls(config.llm)
         else:
             llm_adapter = gemini_adapter_cls(config.llm, runtime_manager=local_runtime)
+    elif config.llm.provider == "openrouter" and config.llm.api_key:
+        from lecture_auto.gemini_addon import HostedLLMAddonAdapter
+
+        llm_adapter = HostedLLMAddonAdapter(config.llm, local_runtime)
     elif config.llm.provider == "ollama":
         llm_adapter = ollama_adapter_cls(config.llm)
     runtime = FFmpegCaptureRuntimeAdapter(

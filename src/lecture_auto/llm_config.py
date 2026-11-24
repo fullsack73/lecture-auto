@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 
+DEFAULT_OPENROUTER_MODEL = "openrouter/auto"
 DEFAULT_GEMINI_MODEL = "gemini-3.1-flash-lite"
 GEMMA4_MODEL_CHOICES = (
     "gemma-4-26b-a4b-it",
@@ -35,7 +36,7 @@ def normalize_gemini_model_name(model_name: str) -> str:
 class LLMConfig:
     """Configuration contract for selecting LLM provider options."""
 
-    provider: str = "gemini"  # "gemini" or "ollama"
+    provider: str = "gemini"
     api_key: str | None = None
     model_name: str = DEFAULT_GEMINI_MODEL
     thinking_level: str = "medium"  # "minimal", "low", "medium", "high"
@@ -60,11 +61,14 @@ class LLMConfig:
         if self.provider == "gemini":
             if not self.api_key or not self.api_key.strip():
                 raise ValueError("Google API key is required and cannot be empty.")
+        elif self.provider == "openrouter":
+            if not self.api_key or not self.api_key.strip():
+                raise ValueError("OpenRouter API key is required and cannot be empty.")
         elif self.provider == "ollama":
             # Ollama doesn't require API key
             pass
         else:
-            raise ValueError(f"Invalid provider: {self.provider}. Must be 'gemini' or 'ollama'.")
+            raise ValueError(f"Invalid provider: {self.provider}. Must be 'gemini', 'openrouter', or 'ollama'.")
 
         if self.chunk_size < 500:
             raise ValueError("chunk_size must be at least 500 characters.")

@@ -176,9 +176,10 @@ def test_short_lecture_renders_concrete_code_and_formula_without_padding() -> No
     assert adapter.ollama.chat.call_count == 2
 
 
-def test_ollama_rejects_a_note_if_its_explanation_gap_survives_repair() -> None:
+def test_ollama_returns_a_complete_note_if_review_findings_survive_repair(caplog) -> None:
     adapter = _adapter()
     original = _valid_payload()
+    repaired_details = [{"title": "병합 순서", "bullets": ["두 배열의 첫 값 중 작은 값을 꺼낸다."]}]
     finding = _ollama_response({"issues": [{
         "section": "detailed_explanations",
         "message": "누락된 병합 과정과 값을 설명해라.",
@@ -187,10 +188,62 @@ def test_ollama_rejects_a_note_if_its_explanation_gap_survives_repair() -> None:
     adapter.ollama.chat.side_effect = [
         _ollama_response(original),
         finding,
-        _ollama_response({"detailed_explanations": original["detailed_explanations"]}),
+        _ollama_response({"detailed_explanations": repaired_details}),
         finding,
     ]
 
-    with pytest.raises(LLMNoteQualityError, match="Note quality issues remain after repair"):
-        adapter.generate_notes("정렬한 두 배열의 첫 값을 비교해 작은 값부터 꺼내서 병합한다.", "# 제목")
+    notes = adapter.generate_notes("정렬한 두 배열의 첫 값을 비교해 작은 값부터 꺼내서 병합한다.", "# 제목")
+    assert "두 배열의 첫 값 중 작은 값을 꺼낸다." in notes
+    assert "Note review findings remain after repair in sections: detailed_explanations." in caplog.text
     assert adapter.ollama.chat.call_count == 4
+
+
+def test_ollama_rejects_notes_without_required_content_after_repair() -> None:
+    adapter = _adapter()
+    adapter.ollama.chat.side_effect = [
+        _ollama_response({}),
+        _ollama_response({"issues": []}),
+        _ollama_response({}),
+    ]
+
+    with pytest.raises(LLMNoteQualityError, match="returned no note content"):
+        adapter.generate_notes("정렬한 두 배열을 병합한다.", "# 제목")
+
+
+@pytest.mark.parametrize("vision", [False, True])
+def test_ollama_uses_attached_pdf(tmp_path, vision):
+    from reportlab.pdfgen.canvas import Canvas
+
+    path = tmp_path / "slides.pdf"
+    pdf = Canvas(str(path))
+    pdf.drawString(50, 100, "Merge by comparing the first values.")
+    pdf.save()
+    adapter = _adapter()
+    adapter.ollama.show.return_value = {"capabilities": ["vision"] if vision else ["completion"]}
+    responses = [_ollama_response(_valid_payload()), _ollama_response({"issues": []})]
+    if vision:
+        responses.insert(0, _ollama_raw_response("Reference extracted from the slide image."))
+    adapter.ollama.chat.side_effect = responses
+
+    adapter.generate_notes("병합 정렬의 원리", "# 제목", material_path=str(path))
+
+    calls = adapter.ollama.chat.call_args_list
+    if vision:
+        assert calls[0].kwargs["messages"][0]["images"][0].startswith(b"\x89PNG")
+    system = calls[int(vision)].kwargs["messages"][0]["content"]
+    expected = "Reference extracted from the slide image." if vision else "Merge by comparing the first values."
+    assert expected in system
+    assert all("images" not in str(call.kwargs["messages"]) for call in calls[int(vision):])
+
+def test_ollama_returns_partial_note_despite_invalid_review_and_empty_repair() -> None:
+    adapter = _adapter()
+    adapter.ollama.chat.side_effect = [
+        _ollama_response({"core_concepts": ["작은 값부터 합친다."]}),
+        _ollama_response({"issues": [{"section": "wrong_section", "message": ""}]}),
+        _ollama_response({"detailed_explanations": [], "questions_to_review": []}),
+    ]
+
+    notes = adapter.generate_notes("정렬한 두 배열을 병합한다.", "# 제목")
+
+    assert "- 작은 값부터 합친다." in notes
+    assert "## Questions to Review\n- Not mentioned." in notes

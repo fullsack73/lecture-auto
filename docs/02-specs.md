@@ -62,7 +62,10 @@ GUI의 전사(API/local)와 LLM 작업(전사문 정제·노트 미리보기/저
   요청은 새 worker를 사용한다. idle 정리는 worker 잠금을 획득한 상태에서만 수행한다.
 - CPU `cpu_threads=0`은 worker가 물리 core 수를 보수적으로 추정해 사용한다.
   `num_workers`와 함께 무제한 논리 core oversubscription을 만들지 않는다.
-- LLM은 `gemini`와 `ollama` provider를 공통 `LLMProviderAdapter` 경계로 제공한다.
+- LLM은 `gemini`, `openrouter`, `ollama`를 공통 `LLMProviderAdapter` 경계로 제공한다.
+- OpenRouter는 별도 다운로드 가능한 관리형 애드온이다. OpenAI SDK는 앱 패키지에서 제외하고
+  애드온 worker에서만 로드한다. `OPENROUTER_API_KEY` 또는 별도의 OS 자격 증명 항목을
+  사용한다. 노트 생성에는 OpenRouter의 JSON 모드가 필요하다.
 - Gemini API는 SDK의 요청별 retry를 명시적으로 설정한다. HTTP 500/502/503/504는 최초 요청 포함 최대 2회, 1~2초 backoff를 적용한다. 400/401/403/429는 자동 재시도하지 않는다. SDK가 지원하는 일시적 연결 오류도 같은 횟수 제한을 적용한다. 작업 전체를 다시 실행하지 않고 실패한 HTTP 요청만 재시도한다. 두 번 모두 실패하면 기존 오류로 종료한다.
 - 녹음은 FFmpeg/AVFoundation 등 플랫폼 실행 세부사항을 `capture_runtime.py` 안에 둔다. 런타임은 앱에 포함된 `bin/ffmpeg`와 `bin/ffprobe`를 시스템 `PATH`보다 우선한다. 녹음 중 FFmpeg `astats`의 최신 peak dBFS를 서비스 경계로 제공하며 GUI는 이를 입력 레벨 미터로 표시한다.
 - 외부 SDK import는 adapter/runtime 내부에서 지연 import할 수 있으며, 가벼운 명령과 테스트 import를 불필요하게 막지 않는다.
@@ -72,7 +75,7 @@ GUI의 전사(API/local)와 LLM 작업(전사문 정제·노트 미리보기/저
 
 - 설정 일반값은 JSON config에 저장한다.
 - STT/LLM API key는 `SecretStore`를 통해 OS credential store에 저장하며 `config.json`에 평문으로 기록하지 않는다.
-- `LECTURE_AUTO_*`, `STT_*`, `LLM_*`, `GEMINI_API_KEY` 환경변수는 명시된 설정 override 경로로만 사용한다.
+- `LECTURE_AUTO_*`, `STT_*`, `LLM_*`, `GEMINI_API_KEY`, `OPENROUTER_API_KEY` 환경변수는 명시된 설정 override 경로로만 사용한다.
 - 사용자 workspace 경로는 `Path.expanduser().resolve()`를 거쳐 다룬다.
 - 테스트에는 실제 API key, 강의 녹음, 개인 자료를 사용하지 않는다.
 
@@ -155,6 +158,11 @@ Gemini 노트 생성은 PDF를 작업당 한 번 읽어 용어·수식·구조·
 추출 실패 시 PDF 전체를 반복 첨부하지 않고 오류로 종료하며 업로드 파일을 정리한다.
 참고문은 실제 발화의 증거가 아니며 전사문을 우선한다.
 
+OpenRouter는 첨부 PDF를 파일 입력으로 작업당 한 번 전송해 참고문을 추출한다.
+Ollama는 모델의 `vision` capability를 확인한다. 비전 모델은 QtPdf로 렌더링한 페이지
+이미지를 읽고, 텍스트 모델은 pypdf로 추출한 텍스트를 사용한다. 스캔 PDF에 비전이
+필요하면 오류로 안내한다. 양쪽 모두 최대 8,000자의 참고문만 후속 노트 생성에 사용한다.
+
 노트 미리보기는 SessionService 메모리에 최근 8개 세션까지 보관한다. 같은 세션의
 전사문/source, PDF 내용·경로, 제목·과목, 템플릿, LLM 설정이 같으면 저장 시
 미리보기 결과를 그대로 사용하고 저장 성공 후 제거한다. 미리보기 재요청은 다시
@@ -185,7 +193,7 @@ benchmark 결과는 CER/WER, 용어 recall, 숫자·수식 recall, 누락률, �
 최상위 Markdown 제목은 고정 문구가 아니라 transcript의 중심 주제를 요약한 `note_title`로 생성한다.
 provider가 제목을 누락하거나 일반적인 제목을 반환하면 첫 번째 topic overview 항목을 호환 fallback으로 사용한다.
 
-Gemini와 Ollama 노트 생성은 같은 흐름을 따르고 앱이 최종 Markdown을 렌더링한다.
+Gemini, OpenRouter, Ollama 노트 생성은 같은 흐름을 따르고 앱이 최종 Markdown을 렌더링한다.
 
 ```text
 transcript → 긴 경우 문장 경계로 분할하고 번호별 근거 추출
@@ -199,7 +207,11 @@ transcript → 긴 경우 문장 경계로 분할하고 번호별 근거 추출
 바로 초안을 만든다. 본문에는 입력, 동작, 이유와 조건을 원문이 뒷받침하는 깊이까지
 설명하고 예제 풀이를 관련 주제에 배치한다. 독립 수식과 코드는 블록으로 렌더링한다.
 검토는 놓친 인과관계·단계·결과, 근거 없는 주장과 본문으로 풀 수 없는 복습 질문을
-확인한다. 보완 후에도 문제가 남으면 `NOTE_QUALITY_FAILED`를 반환해 기존 노트를 보존한다.
+확인한다. JSON을 읽을 수 없으면 해당 요청만 한 번 복구하고, 빈 응답이면 같은 요청을 다시 보낸다.
+전사 조각의 JSON을 끝내 읽을 수 없으면 해당 조각의 원문을 병합에 사용한다.
+잘못된 검토 응답과 항목은 건너뛰고 보완에서 비워진 섹션은 기존 내용을 유지한다.
+일부 섹션이 누락돼도 생성된 내용이 있으면 노트를 반환한다. 내용이 전혀 없거나
+초안의 JSON을 끝내 읽을 수 없으면 `NOTE_QUALITY_FAILED`를 반환해 기존 노트를 보존한다.
 
 이 규칙을 바꾸면 `llm_adapter.py`, 관련 테스트, `src/lecture_auto/templates/structured-notes.md`, 사용자 문서를 함께 검토한다.
 

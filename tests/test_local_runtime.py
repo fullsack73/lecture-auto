@@ -63,6 +63,7 @@ def fake_probe_worker(tmp_path: Path, *, architecture: str | None = None) -> Pat
             "torchaudio": {"found": True, "import_ok": True, "version": "2.7.0", "error": None},
             "deepfilternet": {"found": True, "import_ok": True, "version": "0.5.6", "error": None},
             "onnxruntime": {"found": False, "import_ok": False, "version": None, "error": None},
+            "openai": {"found": True, "import_ok": True, "version": "2.0.0", "error": None},
             "google_genai": {"found": True, "import_ok": True, "version": "1.66.0", "error": None},
         },
     }
@@ -104,6 +105,8 @@ def test_probe_parses_versions_and_external_python(tmp_path: Path) -> None:
     assert status.whisper_installed is True
     assert status.deepfilter_installed is True
     assert status.gemini_installed is True
+    assert status.openrouter_installed is True
+    assert status.openrouter_version == "2.0.0"
     assert status.whisper_version == "1.2.0"
 
 

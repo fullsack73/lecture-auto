@@ -267,6 +267,65 @@ def test_gemini_notes_extract_evidence_and_repair_a_gap_from_its_original_chunk(
     assert "### Depth-First Search Mechanics" in notes
 
 
+@pytest.mark.parametrize("invalid_response", [None, '{"evidence": ['])
+def test_gemini_notes_keep_original_chunk_when_json_retry_fails(invalid_response: str | None) -> None:
+    with patch("google.genai.Client") as client_cls:
+        adapter = GeminiLLMAdapter(LLMConfig(api_key="fake", chunk_size=500))
+    generate = client_cls.return_value.models.generate_content
+    original = "ORIGINAL CHUNK: " + "BFS uses a queue. " * 26
+    payload = {
+        "note_title": "Graph Search",
+        "topic_overview": ["BFS and DFS"],
+        "core_concepts": ["BFS uses a queue."],
+        "detailed_explanations": [{"title": "BFS", "bullets": ["Visit nodes in layers."]}],
+        "questions_to_review": ["What determines visit order?"],
+    }
+    generate.side_effect = [
+        MagicMock(text=invalid_response),
+        MagicMock(text=invalid_response),
+        MagicMock(text='{"evidence": [{"topic": "DFS", "detail": "Stack evidence."}]}'),
+        MagicMock(text=json.dumps(payload)),
+        MagicMock(text='{"issues": []}'),
+    ]
+
+    notes = adapter.generate_notes(original + "DFS uses a stack. " * 24, "# Template")
+
+    first, retry, second, merge, _ = [call.kwargs["contents"][0] for call in generate.call_args_list]
+    if invalid_response is None:
+        assert retry == first
+    else:
+        assert "syntactically invalid" in retry
+    assert second.startswith("Chunk: 2 of 2")
+    assert "ORIGINAL CHUNK" in merge
+    assert "Stack evidence." in merge
+    assert notes.startswith("# Graph Search")
+
+
+@pytest.mark.parametrize("repair_succeeds", [True, False])
+def test_gemini_notes_repair_invalid_draft_or_raise_note_quality_error(repair_succeeds: bool) -> None:
+    with patch("google.genai.Client") as client_cls:
+        adapter = GeminiLLMAdapter(LLMConfig(api_key="fake"))
+    generate = client_cls.return_value.models.generate_content
+    invalid = '{"core_concepts": ['
+    repaired = '{"core_concepts": ["BFS uses a queue."]}'
+    generate.side_effect = [
+        MagicMock(text=invalid),
+        MagicMock(text=repaired if repair_succeeds else invalid),
+        MagicMock(text='{"issues": []}'),
+        MagicMock(text='{}'),
+    ]
+
+    if repair_succeeds:
+        notes = adapter.generate_notes("BFS uses a queue.", "# Template")
+        assert "- BFS uses a queue." in notes
+        assert generate.call_count == 4
+    else:
+        with pytest.raises(LLMNoteQualityError, match="did not return valid note data"):
+            adapter.generate_notes("BFS uses a queue.", "# Template")
+        assert generate.call_count == 2
+    assert "syntactically invalid" in generate.call_args_list[1].kwargs["contents"][0]
+
+
 def test_extract_json_object_preserves_latex_commands_that_look_like_json_escapes() -> None:
     parsed = _extract_json_object(
         r'{"items":["$t \rightarrow \theta \beta \frac{1}{2} \nabla$"]}'

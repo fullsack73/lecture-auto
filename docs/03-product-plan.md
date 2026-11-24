@@ -80,7 +80,7 @@ PySide6 기반으로 같은 workspace와 세션 데이터를 공유한다. 세�
 | 영역 | API/외부 | 로컬 |
 | --- | --- | --- |
 | STT | Deepgram, OpenAI-compatible | Whisper/faster-whisper |
-| LLM | Gemini/Gemma Google API | Ollama |
+| LLM | Gemini/Gemma Google API, OpenRouter 애드온 | Ollama |
 
 로컬 STT 기본 provider는 faster-whisper다. whisper.cpp/MLX, SenseVoiceSmall,
 Qwen3-ASR-0.6B, Moonshine 한국어 모델은 backend·모델·라이선스·패키징이 분리된

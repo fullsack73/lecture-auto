@@ -269,7 +269,17 @@ compatible cuBLAS/cuDNN libraries.
 LLM:
 
 - `gemini`: Google API; supports hosted Gemini and Gemma 4 models
+- `openrouter`: OpenRouter API for transcript refinement and note generation
 - `ollama`: Ollama server; note generation goes through a JSON harness and is rendered as structured Markdown
+
+In desktop Settings, install **OpenRouter SDK** under **Add-ons**, select **OpenRouter** as the LLM provider, and enter an [API key](https://openrouter.ai/keys) and model ID. The default is `openrouter/auto`. Notes require a model that supports JSON mode. OpenRouter receives the transcript and reads any attached PDF once. PDF parsing and model use may incur charges. Ollama renders PDF pages as images for vision models and extracts embedded PDF text for text-only models. Scanned PDFs require a vision model when using Ollama.
+
+For CLI use, set `OPENROUTER_API_KEY` in your environment and run:
+
+```bash
+lecture-auto runtime install --feature openrouter
+lecture-auto config set --llm-provider openrouter --llm-model openrouter/auto
+```
 
 Google API example:
 
@@ -298,6 +308,7 @@ LLM_PROVIDER
 LLM_MODEL
 LLM_THINKING_LEVEL
 GEMINI_API_KEY
+OPENROUTER_API_KEY
 ```
 
 ## JSON Output

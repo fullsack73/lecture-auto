@@ -274,7 +274,17 @@ benchmark 후보다. 별도 native runtime·모델 cache·배포물이 필요해
 LLM:
 
 - `gemini`: Google API. hosted Gemini와 Gemma 4 model 지원
+- `openrouter`: OpenRouter API로 전사문 정제 및 노트 생성
 - `ollama`: Ollama server. 노트 생성은 JSON harness를 거쳐 structured Markdown으로 렌더링
+
+데스크톱 **설정 → 애드온**에서 **OpenRouter SDK**를 설치한다. LLM provider에서 **OpenRouter**를 선택해 [API 키](https://openrouter.ai/keys)와 모델 ID를 입력한다. 기본 모델 ID는 `openrouter/auto`다. 노트 생성에는 JSON 모드를 지원하는 모델이 필요하다. 전사문과 첨부 PDF는 OpenRouter로 전송된다. PDF 파싱과 모델 호출에 요금이 발생할 수 있다. Ollama는 비전 모델에 PDF 페이지를 이미지로 전달하고, 텍스트 모델에는 PDF에서 추출한 텍스트를 전달한다. Ollama에서 스캔 PDF를 쓰려면 비전 모델이 필요하다.
+
+CLI에서는 환경변수 `OPENROUTER_API_KEY`를 설정한 뒤 아래 명령을 실행한다.
+
+```bash
+lecture-auto runtime install --feature openrouter
+lecture-auto config set --llm-provider openrouter --llm-model openrouter/auto
+```
 
 Google API 예시:
 
@@ -322,6 +332,7 @@ LLM_PROVIDER
 LLM_MODEL
 LLM_THINKING_LEVEL
 GEMINI_API_KEY
+OPENROUTER_API_KEY
 ```
 
 ## JSON Output

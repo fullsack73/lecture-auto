@@ -31,6 +31,7 @@ PACKAGE_MODULES = {
     "deepfilternet": "df",
     "onnxruntime": "onnxruntime",
     "google_genai": "google.genai",
+    "openai": "openai",
 }
 
 _WHISPER_MODELS: OrderedDict[tuple[object, ...], Any] = OrderedDict()

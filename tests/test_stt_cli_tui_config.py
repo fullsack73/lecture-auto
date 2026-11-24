@@ -462,3 +462,17 @@ def test_tui_llm_model_includes_gemma4_google_api_options() -> None:
     assert "Gemma 4 31B (Google API)" in titles
     assert "gemma-4-26b-a4b-it" in values
     assert "gemma-4-31b-it" in values
+
+
+def test_cli_config_sets_openrouter_and_accepts_model_slug(tmp_path: Path, monkeypatch) -> None:
+    _set_test_home(monkeypatch, tmp_path)
+    monkeypatch.delenv("LLM_PROVIDER", raising=False)
+
+    result = runner.invoke(app, [
+        "config", "set", "--llm-provider", "openrouter", "--llm-model", "vendor/model:free",
+    ])
+
+    assert result.exit_code == 0, result.output
+    config = json.loads(_config_path(tmp_path).read_text(encoding="utf-8"))
+    assert config["llm_provider"] == "openrouter"
+    assert config["llm_model_name"] == "vendor/model:free"

@@ -59,7 +59,7 @@ from lecture_auto.application import (
 from lecture_auto.capture_runtime import AudioDevice
 from lecture_auto.gui.i18n import Translator
 from lecture_auto.gui.jobs import JobController
-from lecture_auto.llm_config import LLMConfig
+from lecture_auto.llm_config import DEFAULT_GEMINI_MODEL, DEFAULT_OPENROUTER_MODEL, LLMConfig
 from lecture_auto.local_runtime import RuntimeStatus
 from lecture_auto.session_service import CommandResult, SessionCommandError
 from lecture_auto.stt_config import (
@@ -502,6 +502,7 @@ class OnboardingDialog(QDialog):
         layout.addRow("STT", self.stt_mode)
         self.llm_provider = QComboBox()
         self.llm_provider.addItem("Google Gemini API", "gemini")
+        self.llm_provider.addItem("OpenRouter", "openrouter")
         self.llm_provider.addItem("로컬 Ollama", "ollama")
         layout.addRow("LLM", self.llm_provider)
         buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
@@ -518,9 +519,14 @@ class OnboardingDialog(QDialog):
         config.workspace = Path(self.workspace.text()).expanduser().resolve()
         config.ui_language = str(self.language.currentData())
         config.stt.mode = self.stt_mode.currentData()
-        config.llm.provider = str(self.llm_provider.currentData())
+        provider = str(self.llm_provider.currentData())
+        if provider != config.llm.provider:
+            config.llm.api_key = None
+        config.llm.provider = provider
         if config.llm.provider == "ollama" and config.llm.model_name.startswith("gemini"):
             config.llm.model_name = "gemma4:31b-cloud"
+        if config.llm.provider == "openrouter":
+            config.llm.model_name = DEFAULT_OPENROUTER_MODEL
         return config
 
 
@@ -1314,14 +1320,17 @@ class SettingsPage(QWidget):
         form.addRow("dynaudnorm g", self.dynaudnorm_g)
         form.addRow("추가 gain (dB)", self.gain_db)
         form.addRow(settings_section("노트 생성 AI"))
-        self.llm_provider = combo((("Gemini", "gemini"), ("Ollama", "ollama")))
+        self.llm_provider = combo((("Gemini", "gemini"), ("OpenRouter", "openrouter"), ("Ollama", "ollama")))
         self.llm_key = QLineEdit(); self.llm_key.setEchoMode(QLineEdit.Password)
+        self.openrouter_key = QLineEdit()
+        self.openrouter_key.setEchoMode(QLineEdit.Password)
         self.llm_model = QLineEdit()
         self.llm_language = QLineEdit()
         self.thinking = combo(tuple((value, value) for value in ("minimal", "low", "medium", "high")))
         self.ollama_url = QLineEdit()
         form.addRow("LLM provider", self.llm_provider)
         form.addRow("Gemini API key", self.llm_key)
+        form.addRow("OpenRouter API key", self.openrouter_key)
         form.addRow("LLM 모델", self.llm_model)
         form.addRow("LLM 언어", self.llm_language)
         form.addRow("Thinking level", self.thinking)
@@ -1359,7 +1368,8 @@ class SettingsPage(QWidget):
             self.stt_quality_retry_seconds,
             self.stt_hardware_guide,
         )
-        self._gemini_controls = controls_with_labels(self.llm_key)
+        self._gemini_controls = controls_with_labels(self.llm_key, self.thinking)
+        self._openrouter_controls = controls_with_labels(self.openrouter_key)
         self._ollama_controls = controls_with_labels(self.ollama_url)
         self.stt_mode.currentIndexChanged.connect(self._sync_provider_fields)
         self.llm_provider.currentIndexChanged.connect(self._sync_provider_fields)
@@ -1385,6 +1395,7 @@ class SettingsPage(QWidget):
         self.runtime_whisper_status = QLabel("확인 전")
         self.runtime_deepfilter_status = QLabel("확인 전")
         self.runtime_gemini_status = QLabel("확인 전")
+        self.runtime_openrouter_status = QLabel("확인 전")
         self.runtime_libreoffice_status = QLabel("확인 전")
         self.runtime_path_status = QLabel("-")
         self.runtime_path_status.setObjectName("SettingsPath")
@@ -1401,6 +1412,7 @@ class SettingsPage(QWidget):
             ("Whisper", self.runtime_whisper_status),
             ("DeepFilterNet", self.runtime_deepfilter_status),
             ("Gemini SDK", self.runtime_gemini_status),
+            ("OpenRouter SDK", self.runtime_openrouter_status),
             ("LibreOffice", self.runtime_libreoffice_status),
         )
         for row_index, (label, value) in enumerate(runtime_statuses):
@@ -1428,6 +1440,7 @@ class SettingsPage(QWidget):
                 ("Whisper 전사", "whisper"),
                 ("DeepFilterNet 노이즈 제거", "deepfilter"),
                 ("Gemini SDK", "gemini"),
+                ("OpenRouter SDK", "openrouter"),
                 ("LibreOffice 문서 변환", "libreoffice"),
                 ("전체 AI 기능", "all"),
             )
@@ -1562,6 +1575,7 @@ class SettingsPage(QWidget):
             self.stt_hotwords,
             self.stt_quality_retry_model,
             self.llm_key,
+            self.openrouter_key,
             self.llm_model,
             self.llm_language,
             self.ollama_url,
@@ -1632,7 +1646,10 @@ class SettingsPage(QWidget):
             set_combo(self.thinking, cfg.llm.thinking_level)
             self.ollama_url.setText(cfg.llm.ollama_base_url)
             self.stt_key.clear(); self.stt_key.setPlaceholderText("저장됨" if cfg.stt.api_key else "")
-            self.llm_key.clear(); self.llm_key.setPlaceholderText("저장됨" if cfg.llm.api_key else "")
+            self.llm_key.clear()
+            self.openrouter_key.clear()
+            self.llm_key.setPlaceholderText("저장됨" if cfg.llm.provider == "gemini" and cfg.llm.api_key else "")
+            self.openrouter_key.setPlaceholderText("저장됨" if cfg.llm.provider == "openrouter" and cfg.llm.api_key else "")
             self._sync_provider_fields()
             if self.window.jobs.active_count == 0:
                 self.refresh_devices()
@@ -1661,11 +1678,21 @@ class SettingsPage(QWidget):
         for control in self._stt_local_controls:
             control.setEnabled(not stt_uses_api)
 
-        llm_uses_gemini = self.llm_provider.currentData() == "gemini"
-        for control in self._gemini_controls:
-            control.setEnabled(llm_uses_gemini)
-        for control in self._ollama_controls:
-            control.setEnabled(not llm_uses_gemini)
+        provider = self.llm_provider.currentData()
+        for controls, name in (
+            (self._gemini_controls, "gemini"),
+            (self._openrouter_controls, "openrouter"),
+            (self._ollama_controls, "ollama"),
+        ):
+            for control in controls:
+                control.setEnabled(provider == name)
+        old = self.window.config.llm
+        if not self._loading and self.llm_model.text() == old.model_name and provider != old.provider:
+            self.llm_model.setText({
+                "gemini": DEFAULT_GEMINI_MODEL,
+                "openrouter": DEFAULT_OPENROUTER_MODEL,
+                "ollama": "gemma4:31b-cloud",
+            }[provider])
 
     def set_runtime_status(self, status: RuntimeStatus) -> None:
         self.runtime_python_status.setText(
@@ -1676,6 +1703,9 @@ class SettingsPage(QWidget):
         )
         self.runtime_deepfilter_status.setText(
             f"설치됨 · {status.deepfilter_version or 'version unknown'}" if status.deepfilter_installed else "설치되지 않음"
+        )
+        self.runtime_openrouter_status.setText(
+            f"설치됨 · {status.openrouter_version or 'version unknown'}" if status.openrouter_installed else "설치되지 않음"
         )
         self.runtime_gemini_status.setText(
             f"설치됨 · {status.gemini_version or 'version unknown'}" if status.gemini_installed else "설치되지 않음"
@@ -1697,6 +1727,7 @@ class SettingsPage(QWidget):
             "whisper": "약 300MB~1GB (모델 weights 별도)",
             "deepfilter": "약 1.5~3GB",
             "gemini": "약 50~150MB",
+            "openrouter": "약 50~150MB",
             "all": "약 2~4GB",
             "libreoffice": "약 300MB 다운로드, 설치 공간 별도",
         }
@@ -1722,6 +1753,8 @@ class SettingsPage(QWidget):
                 return manager.install_deepfilter(**kwargs)
             if feature == "gemini":
                 return manager.install_gemini(**kwargs)
+            if feature == "openrouter":
+                return manager.install_openrouter(**kwargs)
             return manager.install_all(**kwargs)
         self.window.run_background(f"애드온 {feature} 설치", "__runtime__", work)
 
@@ -1808,7 +1841,13 @@ class SettingsPage(QWidget):
         stt_mode = str(self.stt_mode.currentData())
         llm_provider = str(self.llm_provider.currentData())
         stt_api_key = self.stt_key.text().strip() or old.stt.api_key
-        gemini_api_key = self.llm_key.text().strip() or old.llm.api_key
+        llm_key = None
+        if llm_provider in {"gemini", "openrouter"}:
+            field = self.llm_key if llm_provider == "gemini" else self.openrouter_key
+            llm_key = field.text().strip() or (
+                old.llm.api_key if old.llm.provider == llm_provider
+                else self.window.repository.get_secret(f"{llm_provider}_api_key")
+            )
         return AppConfig(
             workspace=Path(self.workspace.text()),
             ui_language=str(self.language.currentData()),
@@ -1852,7 +1891,7 @@ class SettingsPage(QWidget):
             ),
             llm=LLMConfig(
                 provider=llm_provider,
-                api_key=gemini_api_key,
+                api_key=llm_key,
                 model_name=self.llm_model.text().strip(),
                 thinking_level=str(self.thinking.currentData()),
                 language=self.llm_language.text().strip() or None,
@@ -2130,16 +2169,17 @@ class MainWindow(QMainWindow):
                 return True
             label = "STT API"
         elif provider_type == "llm":
-            if self.config.llm.provider != "gemini":
+            provider = self.config.llm.provider
+            if provider not in {"gemini", "openrouter"}:
                 return True
             if self.config.llm.api_key and self.container.session.llm_adapter is not None:
                 return True
-            key = self.repository.get_secret("gemini_api_key")
+            key = self.repository.get_secret(f"{provider}_api_key")
             if key:
                 self.config.llm.api_key = key
                 self.reload_services(self.config)
                 return True
-            label = "Gemini API"
+            label = "OpenRouter API" if provider == "openrouter" else "Gemini API"
         else:
             raise ValueError(f"Unknown provider credential type: {provider_type}")
 

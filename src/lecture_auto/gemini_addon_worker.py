@@ -1,4 +1,4 @@
-"""One-shot worker for the optional Gemini SDK add-on runtime."""
+"""One-shot worker for the optional hosted LLM add-on runtime."""
 from __future__ import annotations
 
 import os
@@ -26,20 +26,25 @@ def _add_bundled_source_to_path() -> None:
 
 def dispatch(request: dict[str, Any]) -> dict[str, Any]:
     _add_bundled_source_to_path()
-    from lecture_auto.llm_adapter import GeminiLLMAdapter
+    from lecture_auto.llm_adapter import GeminiLLMAdapter, OpenRouterLLMAdapter
     from lecture_auto.llm_config import LLMConfig
 
     config = LLMConfig(**dict(request.get("config") or {}))
-    adapter = GeminiLLMAdapter(config, use_addon=False)
+    if config.provider == "openrouter":
+        adapter = OpenRouterLLMAdapter(config)
+    elif config.provider == "gemini":
+        adapter = GeminiLLMAdapter(config, use_addon=False)
+    else:
+        raise ValueError("Unknown hosted add-on provider.")
     action = request.get("action")
-    if action == "gemini_refine_transcript":
+    if action == f"{config.provider}_refine_transcript":
         text = adapter.refine_transcript(
             str(request.get("raw_text") or ""),
             context_topic=request.get("context_topic"),
             evidence=request.get("evidence"),
             checkpoint_path=request.get("checkpoint_path"),
         )
-    elif action == "gemini_generate_notes":
+    elif action == f"{config.provider}_generate_notes":
         text = adapter.generate_notes(
             str(request.get("transcript") or ""),
             str(request.get("template") or ""),
@@ -47,7 +52,7 @@ def dispatch(request: dict[str, Any]) -> dict[str, Any]:
             material_path=request.get("material_path"),
         )
     else:
-        raise ValueError(f"Unknown Gemini worker action: {action}")
+        raise ValueError(f"Unknown hosted LLM worker action: {action}")
     return {"text": text}
 
 
@@ -57,9 +62,13 @@ def main() -> None:
         emit("error", code="EMPTY_REQUEST", message="Worker request was not provided.")
         raise SystemExit(2)
     try:
-        emit("progress", stage="gemini", completed=0, total=1, message="Calling Gemini add-on")
-        result = dispatch(json.loads(line))
-        emit("progress", stage="complete", completed=1, total=1, message="Gemini add-on complete")
+        request = json.loads(line)
+        is_openrouter = (request.get("config") or {}).get("provider") == "openrouter"
+        provider = "openrouter" if is_openrouter else "gemini"
+        label = "OpenRouter" if is_openrouter else "Gemini"
+        emit("progress", stage=provider, completed=0, total=1, message=f"Calling {label} add-on")
+        result = dispatch(request)
+        emit("progress", stage="complete", completed=1, total=1, message=f"{label} add-on complete")
         emit("result", result=result)
     except BaseException as exc:
         emit(

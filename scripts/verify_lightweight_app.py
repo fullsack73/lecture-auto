@@ -21,6 +21,7 @@ BANNED = (
     "df",
     "google.genai",
     "google.api_core",
+    "openai",
 )
 FILE_TOKENS = (
     "torch",

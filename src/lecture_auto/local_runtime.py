@@ -18,11 +18,12 @@ from typing import Any, Callable, Literal
 from lecture_auto.tasking import CancellationToken, TaskCancelledError
 
 
-RuntimeFeature = Literal["whisper", "deepfilter", "gemini"]
+RuntimeFeature = Literal["whisper", "deepfilter", "gemini", "openrouter"]
 RuntimeProgress = Callable[[str, int | float | None, int | float | None, str], None]
 
 WHISPER_PACKAGES = ("faster-whisper>=1.0.0",)
 DEEPFILTER_PACKAGES = ("torch>=2.2.0", "torchaudio>=2.2.0", "deepfilternet>=0.5.6")
+OPENROUTER_PACKAGES = ("openai>=1.0.0", "httpx[socks]")
 GEMINI_PACKAGES = ("google-genai>=1.0.0",)
 
 
@@ -38,6 +39,7 @@ class LocalRuntimeMissingError(LocalRuntimeError):
             "whisper": "Whisper",
             "deepfilter": "DeepFilterNet",
             "gemini": "Gemini",
+            "openrouter": "OpenRouter",
         }[feature]
         super().__init__(f"{label} add-on is not installed. Open Settings > Add-ons to install it.")
         self.feature = feature
@@ -63,6 +65,8 @@ class RuntimeStatus:
     deepfilter_version: str | None = None
     gemini_installed: bool = False
     gemini_version: str | None = None
+    openrouter_installed: bool = False
+    openrouter_version: str | None = None
     healthy: bool = False
     error: str | None = None
     packages: dict[str, PackageStatus] = field(default_factory=dict)
@@ -72,6 +76,7 @@ class RuntimeStatus:
             "whisper": self.whisper_installed,
             "deepfilter": self.deepfilter_installed,
             "gemini": self.gemini_installed,
+            "openrouter": self.openrouter_installed,
         }[feature]
 
 
@@ -394,7 +399,7 @@ class LocalRuntimeManager:
                 return status
             if status.error:
                 errors.append(f"{source}: {status.error}")
-            if status.whisper_installed or status.deepfilter_installed or status.gemini_installed:
+            if status.whisper_installed or status.deepfilter_installed or status.gemini_installed or status.openrouter_installed:
                 self.last_probe_error = status.error
                 return status
         error = "; ".join(errors) or "No candidate Python has a usable local AI runtime."
@@ -436,6 +441,7 @@ class LocalRuntimeManager:
             whisper = all(packages.get(name, PackageStatus()).import_ok for name in ("faster_whisper", "ctranslate2"))
             deepfilter = all(packages.get(name, PackageStatus()).import_ok for name in ("torch", "torchaudio", "deepfilternet"))
             gemini = packages.get("google_genai", PackageStatus()).import_ok
+            openrouter = packages.get("openai", PackageStatus())
             import_errors = [f"{name}: {value.error}" for name, value in packages.items() if value.found and not value.import_ok and value.error]
             return RuntimeStatus(
                 python_path=str(result.get("python_path") or python),
@@ -448,7 +454,9 @@ class LocalRuntimeManager:
                 deepfilter_version=packages.get("deepfilternet", PackageStatus()).version,
                 gemini_installed=gemini,
                 gemini_version=packages.get("google_genai", PackageStatus()).version,
-                healthy=whisper or deepfilter or gemini,
+                openrouter_installed=openrouter.import_ok,
+                openrouter_version=openrouter.version,
+                healthy=whisper or deepfilter or gemini or openrouter.import_ok,
                 error="; ".join(import_errors) or None,
                 packages=packages,
             )
@@ -492,6 +500,8 @@ class LocalRuntimeManager:
                 requested.add("deepfilter")
             if current and current.gemini_installed:
                 requested.add("gemini")
+            if current and current.openrouter_installed:
+                requested.add("openrouter")
             uv = self._resolve_uv()
             env = dict(os.environ)
             env["UV_PYTHON_INSTALL_DIR"] = str(self.python_install_dir)
@@ -516,6 +526,8 @@ class LocalRuntimeManager:
                 packages.extend(DEEPFILTER_PACKAGES)
             if "gemini" in requested:
                 packages.extend(GEMINI_PACKAGES)
+            if "openrouter" in requested:
+                packages.extend(OPENROUTER_PACKAGES)
             self._step(progress, "packages", 2, 4, "Installing add-on packages")
             self._run_command([str(uv), "pip", "install", "--python", str(_python_in_venv(staging)), *packages], env, progress, token)
             token.raise_if_cancelled()
@@ -549,8 +561,11 @@ class LocalRuntimeManager:
     def install_gemini(self, **kwargs: Any) -> RuntimeStatus:
         return self.install({"gemini"}, **kwargs)
 
+    def install_openrouter(self, **kwargs: Any) -> RuntimeStatus:
+        return self.install({"openrouter"}, **kwargs)
+
     def install_all(self, **kwargs: Any) -> RuntimeStatus:
-        return self.install({"whisper", "deepfilter", "gemini"}, **kwargs)
+        return self.install({"whisper", "deepfilter", "gemini", "openrouter"}, **kwargs)
 
     def repair(self, **kwargs: Any) -> RuntimeStatus:
         status = self.probe_python(_python_in_venv(self.active_dir), source="managed")
@@ -561,7 +576,9 @@ class LocalRuntimeManager:
             features.add("deepfilter")
         if status.gemini_installed or "google_genai" in status.packages:
             features.add("gemini")
-        return self.install(features or {"whisper", "deepfilter", "gemini"}, **kwargs)
+        if status.openrouter_installed or "openai" in status.packages:
+            features.add("openrouter")
+        return self.install(features or {"whisper", "deepfilter", "gemini", "openrouter"}, **kwargs)
 
     def remove(self) -> None:
         self._acquire_mutation()
@@ -610,7 +627,7 @@ class LocalRuntimeManager:
         timeout: float | None = None,
     ) -> dict[str, Any]:
         python = self.python_for(feature)
-        worker_script = self.gemini_worker_script if feature == "gemini" else self.worker_script
+        worker_script = self.gemini_worker_script if feature in {"gemini", "openrouter"} else self.worker_script
         if feature == "whisper":
             return self._run_persistent_worker(
                 python,

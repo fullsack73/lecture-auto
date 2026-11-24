@@ -158,6 +158,8 @@ def _select_llm_model(provider: str = "", current: str = "") -> str | None:
     If provider is 'local', allow manual input. Otherwise use Google API presets.
     """
     provider = (provider or "").strip().lower()
+    if provider == "openrouter":
+        return _ask("OpenRouter model ID (e.g. openrouter/auto)", default=current)
     if provider in {"local", "ollama"}:
         return _ask("LLM model name (e.g. llama3, mistral)", default=current)
 
@@ -203,6 +205,11 @@ def _select_llm_provider(current: str = "") -> str | None:
             title="Google API",
             value="gemini",
             checked=normalized_current == "gemini" or normalized_current == "",
+        ),
+        questionary.Choice(
+            title="OpenRouter",
+            value="openrouter",
+            checked=normalized_current == "openrouter",
         ),
         questionary.Choice(
             title="Local (Ollama)",
@@ -335,7 +342,7 @@ def _load_config() -> dict:
 
     repository = ConfigRepository()
     data = repository._read_raw()
-    for name in ("stt_api_key", "gemini_api_key"):
+    for name in ("stt_api_key", "gemini_api_key", "openrouter_api_key"):
         value = repository.secret_store.get(name)
         if value:
             data[name] = value
@@ -346,7 +353,7 @@ def _save_config(data: dict) -> None:
     from lecture_auto.application import ConfigRepository
 
     repository = ConfigRepository()
-    for name in ("stt_api_key", "gemini_api_key"):
+    for name in ("stt_api_key", "gemini_api_key", "openrouter_api_key"):
         if name in data:
             repository.set_secret(name, data.pop(name) or None)
     path = repository.path
@@ -865,12 +872,13 @@ def _menu_config() -> bool:
                 ("stt_quality_retry_max_seconds", "Maximum retried audio seconds"),
                 "── LLM (Large Language Model) ──",
                 ("llm_language", "LLM language (e.g. korean)"),
-                ("llm_provider", "LLM provider (Google API or local)"),
+                ("llm_provider", "LLM provider"),
                 ("llm_model_name", "LLM model"),
                 ("llm_thinking_level", "LLM thinking level"),
                 "── API Keys ──",
                 ("stt_api_key", "STT API key"),
                 ("gemini_api_key", "Google API key"),
+                ("openrouter_api_key", "OpenRouter API key"),
             ]
 
             # Flat list for lookup — only the actual (key, label) tuples.
@@ -885,7 +893,7 @@ def _menu_config() -> bool:
                     else:
                         key, label = item
                         current = data.get(key, "")
-                        if key in ("stt_api_key", "gemini_api_key") and current:
+                        if key in ("stt_api_key", "gemini_api_key", "openrouter_api_key") and current:
                             display = f"[{'*' * min(len(current), 8)}] {label}"
                         else:
                             display = f"[{current}] {label}" if current else f"[ ] {label}"
@@ -947,6 +955,10 @@ def _menu_config() -> bool:
                         continue
                     if value == "__clear__":
                         value = ""
+                elif selected_key == "openrouter_api_key":
+                    value = questionary.password("OpenRouter API key").ask()
+                    if not value:
+                        continue
                 else:
                     prompt = next(label for k, label in fields if k == selected_key)
                     value = _ask(
@@ -980,14 +992,17 @@ def _menu_config() -> bool:
                     if selected_key == "llm_provider":
                         normalized_provider = value.lower()
                         google_aliases = {"gemini", "google", "google_api", "google-api", "google api"}
-                        valid_providers = google_aliases | {"local", "ollama"}
+                        valid_providers = google_aliases | {"local", "ollama", "openrouter"}
                         if normalized_provider not in valid_providers:
-                            typer.echo("Invalid LLM provider. Must be 'gemini'/'google api' or 'local'. Skipping.")
+                            typer.echo("Invalid LLM provider. Use 'gemini', 'openrouter', or 'local'. Skipping.")
                             continue
                         if normalized_provider in google_aliases:
                             value = "gemini"
                         elif normalized_provider == "ollama":
                             value = "local"
+                        previous = data.get("llm_provider", "gemini")
+                        if value != previous and "openrouter" in {value, previous}:
+                            data.pop("llm_model_name", None)
                     if selected_key in {
                         "use_dynaudnorm",
                         "stt_vad_filter",
