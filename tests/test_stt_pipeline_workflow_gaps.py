@@ -69,6 +69,28 @@ def test_transcription_writes_raw_transcript_file_under_transcripts_folder(tmp_p
     assert "\n" not in content.strip()
 
 
+@pytest.mark.parametrize("segments", [[], [DiarizedSegment("Speaker", 0, 1, " ")]])
+def test_empty_stt_result_saves_no_speech_transcript(tmp_path: Path, segments) -> None:
+    class SilentAdapter:
+        def transcribe(self, *, audio_path: str) -> STTResult:
+            return STTResult(transcript_text=" ", provider="fake", mode="api", segments=segments)
+
+    service = _service(tmp_path, adapter=SilentAdapter())
+    service.session_create("session-silent", "2026-03-06")
+    source = tmp_path / "sample.wav"
+    source.write_bytes(b"wav")
+    service.import_audio("session-silent", str(source))
+
+    result = service.transcribe_session("session-silent")
+
+    assert result.payload["transcription_status"] == "succeeded"
+    assert result.payload["transcription_error_category"] is None
+    transcript = tmp_path / result.payload["transcript_file_path"]
+    assert transcript.read_text(encoding="utf-8") == "음성이 감지되지 않았습니다."
+    sidecar = tmp_path / result.payload["transcript_metadata_file_path"]
+    assert json.loads(sidecar.read_text(encoding="utf-8"))["provider"] == "fake"
+
+
 def test_local_transcription_writes_confidence_sidecar(tmp_path: Path) -> None:
     class ConfidenceAdapter:
         def transcribe(self, *, audio_path: str) -> STTResult:

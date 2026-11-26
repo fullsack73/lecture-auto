@@ -52,10 +52,24 @@ def test_uncertain_language_detection_votes_across_speech_samples(monkeypatch):
     assert calls == [30 * 16000] * 3
 
 
-def test_language_detection_rejects_all_silence(monkeypatch):
+def test_worker_completes_silent_audio_without_decoding_speech(monkeypatch):
+    audio = np.zeros(16000, dtype=np.float32)
+    monkeypatch.setitem(sys.modules, "faster_whisper", SimpleNamespace(WhisperModel=lambda *_args, **_kwargs: object()))
     monkeypatch.setitem(sys.modules, "faster_whisper.vad", SimpleNamespace(get_speech_timestamps=lambda _audio: []))
-    with pytest.raises(ValueError, match="No speech detected"):
-        worker._detect_whisper_language(object(), np.zeros(16000, dtype=np.float32))
+    monkeypatch.setitem(sys.modules, "ctranslate2", SimpleNamespace(
+        get_supported_compute_types=lambda _device: {"int8"}, get_cuda_device_count=lambda: 0,
+    ))
+    monkeypatch.setattr(worker, "_decode_whisper_audio", lambda _request: (audio, "pyav"))
+
+    result = worker.whisper({"quality_retry_enabled": True})
+
+    assert result["transcript_text"] == ""
+    assert result["segments"] == result["retry_segments"] == []
+    assert result["language"] is None
+    assert result["metadata"]["language_probability"] is None
+    assert result["metadata"]["language_detection_source"] == "no_speech"
+    assert result["metadata"]["duration_seconds"] == 1.0
+    assert result["metadata"]["duration_after_vad_seconds"] == 0.0
 
 
 @pytest.mark.parametrize("probability,retry_language", [(0.55, None), (0.95, "en")])

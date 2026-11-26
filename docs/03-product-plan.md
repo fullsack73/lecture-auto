@@ -59,7 +59,7 @@ PySide6 기반으로 같은 workspace와 세션 데이터를 공유한다. 세�
 - 전사와 LLM 작업을 각각 독립된 FIFO 대기열에서 순차 처리하며 두 대기열은 동시 실행
 - 같은 세션의 후속 작업도 등록하고, 실패·취소 후 다음 작업을 계속 처리
 - 녹음과 오디오 작업은 AI 대기열과 별도로 실행
-- raw transcript 생성
+- raw transcript 생성. 음성이 감지되지 않으면 전사문에 그 사실을 기록
 - timestamp/confidence/runtime을 담은 raw STT sidecar 생성
 - LLM으로 오탈자/띄어쓰기/표현을 다듬되 의미와 용어를 보존하는 edited transcript 생성
 - 정제 실패·취소 후 같은 입력으로 재실행하면 완료한 구간을 재사용

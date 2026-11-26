@@ -74,14 +74,17 @@ def test_usage_log_has_counts_and_no_response_text(tmp_path, monkeypatch):
             input_characters={"transcript": 100, "context": 20, "system": 10})
         _log_llm_usage("ollama", "notes", {"prompt_eval_count": 77, "eval_count": 22,
                                           "message": {"content": "private notes"}})
-        _log_llm_usage("gemini", "notes", SimpleNamespace(text="private"))
+        _log_llm_usage("gemini", "notes", SimpleNamespace(
+            text="private", candidates=[SimpleNamespace(finish_reason="MAX_TOKENS")],
+        ))
         content = (tmp_path / ".lecture_auto/logs/llm-usage.jsonl").read_text()
         records = [json.loads(line) for line in content.splitlines()]
         assert records[0]["input_tokens"] == 123
         assert records[0]["cached_tokens"] == 10
         assert records[0]["input_characters"] == {"transcript": 100, "context": 20, "system": 10}
         assert records[1]["output_tokens"] == 22
-        assert records[2] == {"time": records[2]["time"], "provider": "gemini", "stage": "notes", "requests": 1}
+        assert records[2] == {"time": records[2]["time"], "provider": "gemini",
+                              "stage": "notes", "requests": 1, "finish_reason": "MAX_TOKENS"}
         assert "private" not in content
     finally:
         for handler in logger.handlers:

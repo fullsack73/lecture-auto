@@ -46,6 +46,11 @@ def _log_llm_usage(
         value = usage.get(field) if isinstance(usage, dict) else getattr(usage, field, None)
         if type(value) is int:
             record[name] = value
+    if provider == "gemini" and (stage.startswith("note") or stage == "syntax_repair"):
+        candidates = getattr(response, "candidates", None)
+        reason = getattr(candidates[0], "finish_reason", None) if candidates else None
+        if isinstance(reason, str):
+            record["finish_reason"] = str(getattr(reason, "value", reason))
     usage_logger = logging.getLogger("lecture_auto.llm_usage")
     try:
         if not usage_logger.handlers:
@@ -295,18 +300,13 @@ def _extract_json_object(text: str) -> dict[str, Any]:
 
 
 def _load_json_object_candidate(candidate: str) -> Any:
-    latex_safe_candidate = _escape_latex_json_backslashes(candidate)
-    for source in (
-        latex_safe_candidate,
-        candidate,
-        _escape_invalid_json_backslashes(latex_safe_candidate),
-        _escape_invalid_json_backslashes(candidate),
-    ):
+    try:
+        return json.loads(_escape_broken_json_backslashes(candidate))
+    except json.JSONDecodeError:
         try:
-            return json.loads(source)
+            return json.loads(candidate)
         except json.JSONDecodeError:
-            continue
-    return None
+            return None
 
 
 _LATEX_JSON_COMMAND_PREFIXES = (
@@ -374,10 +374,15 @@ _LATEX_JSON_COMMAND = re.compile(
 )
 
 
-def _escape_latex_json_backslashes(candidate: str) -> str:
-    """Protect common LaTeX commands before JSON parsing consumes them as escapes."""
+_JSON_ESCAPE = re.compile(r'["\\/bfnrt]|u[0-9a-fA-F]{4}')
+_JSON_MATH_REMAINDER = re.compile(r'(?:[^"\\$]|\\.)*\$')
+
+
+def _escape_broken_json_backslashes(candidate: str) -> str:
+    """Repair malformed string escapes while consuming valid escape pairs together."""
     result: list[str] = []
     in_string = False
+    in_math = False
     i = 0
 
     while i < len(candidate):
@@ -392,11 +397,15 @@ def _escape_latex_json_backslashes(candidate: str) -> str:
         if char == '"':
             result.append(char)
             in_string = False
+            in_math = False
             i += 1
             continue
 
         if char == "\\":
-            if _LATEX_JSON_COMMAND.match(candidate, i + 1):
+            if (
+                (in_math and _LATEX_JSON_COMMAND.match(candidate, i + 1))
+                or not _JSON_ESCAPE.match(candidate, i + 1)
+            ):
                 result.append("\\\\")
                 i += 1
                 continue
@@ -409,14 +418,12 @@ def _escape_latex_json_backslashes(candidate: str) -> str:
                 i += 1
             continue
 
+        if char == "$" and candidate[i + 1 : i + 2] != "$":
+            in_math = not in_math and bool(_JSON_MATH_REMAINDER.match(candidate, i + 1))
         result.append(char)
         i += 1
 
     return "".join(result)
-
-
-def _escape_invalid_json_backslashes(candidate: str) -> str:
-    return re.sub(r'\\(?!["\\/bfnrtu])', r"\\\\", candidate)
 
 
 def _clean_note_item(value: Any) -> str | None:

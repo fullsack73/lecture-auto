@@ -334,6 +334,16 @@ def test_extract_json_object_preserves_latex_commands_that_look_like_json_escape
     assert parsed["items"][0] == r"$t \rightarrow \theta \beta \frac{1}{2} \nabla$"
 
 
+def test_extract_json_object_preserves_escapes_in_valid_json() -> None:
+    data = {"items": ["line\nabla", "code\times", r"\qquad"]}
+    assert _extract_json_object(json.dumps(data)) == data
+
+
+def test_extract_json_object_repairs_bad_escape_alongside_escaped_backslash() -> None:
+    parsed = _extract_json_object(r'{"items":["\\qquad and \zeta", "\unicode", "\u03b1"]}')
+    assert parsed["items"] == [r"\qquad and \zeta", r"\unicode", "α"]
+
+
 def test_structured_note_title_falls_back_to_topic_overview() -> None:
     note_data = _normalize_structured_note_data(
         {

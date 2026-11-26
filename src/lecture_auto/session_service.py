@@ -1069,11 +1069,13 @@ class SessionService:
                 raise self.map_transcription_failure("runtime", detail=str(exc)) from exc
 
         output_text = transcript_text or ""
-        if transcript_result and transcript_result.segments:
+        if transcript_result and any(segment.text.strip() for segment in transcript_result.segments):
             if transcript_result.mode == "local":
                 output_text = transcript_result.to_plain_text()
             else:
                 output_text = transcript_result.to_diarized_markdown()
+        if not output_text.strip():
+            output_text = "음성이 감지되지 않았습니다."
 
         token.raise_if_cancelled()
         transcript_relative_path = self.store.build_raw_transcript_path(

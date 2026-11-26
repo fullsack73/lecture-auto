@@ -358,20 +358,29 @@ def whisper(request: dict[str, Any]) -> dict[str, Any]:
 
     audio, audio_decode_backend = _decode_whisper_audio(request)
     language_probability = None
+    language_detection_source = "configured"
     if not request.get("language"):
         emit(
             "progress", stage="detecting_language", completed=0, total=None,
             message="Detecting language from speech",
         )
         language, language_probability = _detect_whisper_language(runtime, audio)
-        transcribe_kwargs["language"] = language
+        language_detection_source = "no_speech" if language is None else "speech_vad"
+        if language is not None:
+            transcribe_kwargs["language"] = language
     requested_batch_size = int(request.get("batch_size") or 1)
     if requested_batch_size > 1 and not transcribe_kwargs["vad_filter"]:
         raise ValueError("Batched Whisper transcription requires vad_filter=true")
 
     effective_batch_size = requested_batch_size
     batch_retry_count = 0
+    info = None
+    segments = []
+    text_parts = []
     while True:
+        if language_detection_source == "no_speech":
+            duration = len(audio) / 16000
+            break
         attempt_kwargs = dict(transcribe_kwargs)
         transcriber: Any = runtime
         if effective_batch_size > 1:
@@ -380,8 +389,6 @@ def whisper(request: dict[str, Any]) -> dict[str, Any]:
             transcriber = BatchedInferencePipeline(model=runtime)
             attempt_kwargs["batch_size"] = effective_batch_size
 
-        segments = []
-        text_parts = []
         try:
             raw_segments, info = transcriber.transcribe(
                 audio,
@@ -437,6 +444,8 @@ def whisper(request: dict[str, Any]) -> dict[str, Any]:
         except RuntimeError as exc:
             if effective_batch_size <= 1 or not _is_memory_exhaustion(exc):
                 raise
+            segments.clear()
+            text_parts.clear()
             effective_batch_size = max(1, effective_batch_size // 2)
             batch_retry_count += 1
             emit(
@@ -510,17 +519,16 @@ def whisper(request: dict[str, Any]) -> dict[str, Any]:
             "beam_size": transcribe_kwargs["beam_size"],
             "vad_filter": transcribe_kwargs["vad_filter"],
             "duration_seconds": duration,
-            "duration_after_vad_seconds": float(
-                getattr(info, "duration_after_vad", duration) or 0
+            "duration_after_vad_seconds": (
+                float(getattr(info, "duration_after_vad", duration) or 0)
+                if info is not None else 0.0
             ),
             "language_probability": _optional_float(
                 language_probability
                 if language_probability is not None
                 else getattr(info, "language_probability", None)
             ),
-            "language_detection_source": (
-                "configured" if request.get("language") else "speech_vad"
-            ),
+            "language_detection_source": language_detection_source,
             "model_load_seconds": model_loaded_at - started_at,
             "warm_start": warm_start,
             "model_cache_size": len(_WHISPER_MODELS),
@@ -544,7 +552,7 @@ def whisper(request: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _detect_whisper_language(runtime: Any, audio: Any) -> tuple[str, float]:
+def _detect_whisper_language(runtime: Any, audio: Any) -> tuple[str, float] | tuple[None, None]:
     import numpy as np
     from faster_whisper.vad import get_speech_timestamps
 
@@ -562,7 +570,7 @@ def _detect_whisper_language(runtime: Any, audio: Any) -> tuple[str, float]:
         if remaining <= 0:
             break
     if not samples or not any(len(piece) for piece in samples):
-        raise ValueError("No speech detected. Check the recording or set the STT language explicitly.")
+        return None, None
     speech = np.concatenate(samples)
     detections: list[tuple[str, float]] = []
     for offset in range(0, len(speech), 30 * 16000):
