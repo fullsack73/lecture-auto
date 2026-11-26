@@ -277,12 +277,6 @@ QProgressBar::chunk { background: #34765a; border-radius: 3px; }
 QCheckBox { spacing: 8px; }
 QCheckBox::indicator { width: 17px; height: 17px; border: 1px solid #aebbb3; border-radius: 4px; background: #ffffff; }
 QCheckBox::indicator:checked { background: #34765a; border-color: #34765a; }
-QLabel#PageEyebrow {
-    color: #34765a;
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 1.1px;
-}
 QLabel#PageTitle { color: #14201a; font-size: 30px; font-weight: 800; letter-spacing: -0.7px; }
 QLabel#DetailTitle { color: #16231c; font-size: 22px; font-weight: 750; letter-spacing: -0.3px; }
 QLabel#SectionTitle { color: #1b2921; font-size: 16px; font-weight: 700; }
@@ -580,11 +574,9 @@ class HomePage(QWidget):
         layout.setSpacing(0)
         header = QHBoxLayout()
         header.setSpacing(20)
-        copy = QVBoxLayout()
-        copy.setSpacing(6)
         title = QLabel("강의를 기록하고, 바로 정리하세요")
         title.setObjectName("PageTitle")
-        copy.addWidget(title)
+        header.addWidget(title, 1)
         create = QPushButton("새 세션")
         create.setObjectName("Primary")
         create.clicked.connect(window.create_session)
@@ -639,11 +631,9 @@ class SessionsPage(QWidget):
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
         header = QHBoxLayout()
-        heading = QVBoxLayout()
-        heading.setSpacing(5)
         title = QLabel("세션 관리")
         title.setObjectName("PageTitle")
-        heading.addWidget(title)
+        header.addWidget(title, 1)
         create = QPushButton("새 세션")
         create.setObjectName("Primary")
         create.clicked.connect(window.create_session)
@@ -687,7 +677,6 @@ class SessionsPage(QWidget):
         def workflow_stage(
             step: str,
             title: str,
-            hint: str,
         ) -> tuple[QFrame, QVBoxLayout]:
             stage = QFrame()
             stage.setObjectName("WorkflowStage")
@@ -698,12 +687,8 @@ class SessionsPage(QWidget):
             step_label.setObjectName("WorkflowStep")
             stage_title = QLabel(title)
             stage_title.setObjectName("WorkflowTitle")
-            stage_hint = QLabel(hint)
-            stage_hint.setObjectName("WorkflowHint")
-            stage_hint.setWordWrap(True)
             stage_layout.addWidget(step_label)
             stage_layout.addWidget(stage_title)
-            stage_layout.addWidget(stage_hint)
             stage_layout.addSpacing(4)
             return stage, stage_layout
 

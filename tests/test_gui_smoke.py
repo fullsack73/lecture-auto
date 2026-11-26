@@ -65,6 +65,9 @@ def test_sidebar_shows_application_version(tmp_path: Path, qtbot) -> None:
 
 def test_main_window_navigates_and_shows_created_session(tmp_path: Path, qtbot) -> None:
     window = make_window(tmp_path, qtbot)
+    assert window.stack.currentWidget().findChild(QLabel, "PageTitle").text() == (
+        "강의를 기록하고, 바로 정리하세요"
+    )
     window.container.session.session_create("week-01", "2026-07-12", "Intro", "CS101")
 
     window.refresh_all()
@@ -72,6 +75,7 @@ def test_main_window_navigates_and_shows_created_session(tmp_path: Path, qtbot) 
     window.show_page(1)
 
     assert window.stack.currentWidget() is window.sessions_page
+    assert window.sessions_page.findChild(QLabel, "PageTitle").text() == "세션 관리"
     assert window.sessions_page.current_session_id == "week-01"
     assert window.sessions_page.detail_title.text() == "Intro"
 
